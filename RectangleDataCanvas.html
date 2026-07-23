@@ -188,7 +188,6 @@
             }
         });
 
-        // Reduced gizmo radius from 14 to 9 for a smaller footprint
         const GIZMO_RADIUS = 9;
         const GRID_DIVISIONS = 50; 
 
@@ -210,15 +209,20 @@
             children: []
         };
 
+        // FIX 3: Cache pale colors per ID to prevent recalculation on every frame
+        const paleColorCache = new Map();
         function getPaleColor(id) {
+            if (!id) return { hue: 0, saturation: 35, lightness: 75 };
+            if (paleColorCache.has(id)) return paleColorCache.get(id);
+
             let hash = 0;
-            if (id) {
-                for (let i = 0; i < id.length; i++) {
-                    hash = id.charCodeAt(i) + ((hash << 5) - hash);
-                }
+            for (let i = 0; i < id.length; i++) {
+                hash = id.charCodeAt(i) + ((hash << 5) - hash);
             }
             const hue = Math.abs(hash) % 360;
-            return { hue, saturation: 35, lightness: 75 };
+            const res = { hue, saturation: 35, lightness: 75 };
+            paleColorCache.set(id, res);
+            return res;
         }
 
         function ensureRectStructure(node) {
@@ -236,7 +240,7 @@
 
         let camera = { x: 0, y: 0, zoom: 1 };
         const MIN_ZOOM = 0.5;
-        const MAX_ZOOM = 1e14; // Cap at IEEE 754 safe double-precision mantissa boundary
+        const MAX_ZOOM = 1e14;
         
         let needsRedraw = true;
         let hasUnsavedChanges = false; 
@@ -276,15 +280,23 @@
         window.addEventListener('resize', resize);
         resize();
 
-        function getRawWorldCoords(clientX, clientY) {
-            return {
-                x: (clientX - viewW / 2) / camera.zoom + camera.x,
-                y: (clientY - viewH / 2) / camera.zoom + camera.y
-            };
+        // FIX 5: Shared reusable objects to prevent GC thrashing during drag loops
+        const tempWorldCoords = { x: 0, y: 0 };
+        function getRawWorldCoords(clientX, clientY, outObj) {
+            let res = outObj || tempWorldCoords;
+            res.x = (clientX - viewW / 2) / camera.zoom + camera.x;
+            res.y = (clientY - viewH / 2) / camera.zoom + camera.y;
+            return res;
         }
 
-        function snapChildPositionToParent(targetX, targetY, bubbleW, bubbleH, parent) {
-            if (!parent) return { x: targetX, y: targetY };
+        const tempSnappedCoords = { x: 0, y: 0 };
+        function snapChildPositionToParent(targetX, targetY, bubbleW, bubbleH, parent, outObj) {
+            let res = outObj || tempSnappedCoords;
+            if (!parent) {
+                res.x = targetX;
+                res.y = targetY;
+                return res;
+            }
             let stepX = parent.w / GRID_DIVISIONS;
             let stepY = parent.h / GRID_DIVISIONS;
             let pTlX = parent.x - parent.w / 2;
@@ -296,10 +308,9 @@
             let snappedChildTlX = pTlX + Math.round((childTlX - pTlX) / stepX) * stepX;
             let snappedChildTlY = pTlY + Math.round((childTlY - pTlY) / stepY) * stepY;
 
-            return {
-                x: snappedChildTlX + bubbleW / 2,
-                y: snappedChildTlY + bubbleH / 2
-            };
+            res.x = snappedChildTlX + bubbleW / 2;
+            res.y = snappedChildTlY + bubbleH / 2;
+            return res;
         }
 
         function draw() {
@@ -335,18 +346,16 @@
             return lines;
         }
 
-        function drawWrappedText(text, screenX, screenY, screenW, screenH, alpha) {
-            if (!text || !text.trim()) return;
+        // FIX 1: Memoize expensive text wrapping & binary font-size calculations
+        const textLayoutCache = new Map();
 
-            let minDim = Math.min(screenW, screenH);
-            if (minDim < 10) return; 
-
+        function computeTextLayout(text, screenW, screenH) {
             let paddedW = screenW * 0.85;
             let paddedH = screenH * 0.85;
-            if (paddedW <= 0 || paddedH <= 0) return;
+            if (paddedW <= 0 || paddedH <= 0) return null;
 
             let words = text.trim().split(/\s+/);
-            if (words.length === 0) return;
+            if (words.length === 0) return null;
 
             let maxPossibleSize = Math.min(paddedH, Math.max(12, screenH * 0.4));
             let low = 1;
@@ -384,8 +393,30 @@
                 }
             }
 
-            if (bestFontSize < 2 || bestLines.length === 0) return;
+            if (bestFontSize < 2 || bestLines.length === 0) return null;
 
+            return { bestFontSize, bestLines };
+        }
+
+        function drawWrappedText(text, screenX, screenY, screenW, screenH, alpha) {
+            if (!text || !text.trim()) return;
+
+            let minDim = Math.min(screenW, screenH);
+            if (minDim < 10) return; 
+
+            // Key on text string and rounded display dimensions
+            let cacheKey = `${text}_${Math.round(screenW)}_${Math.round(screenH)}`;
+            let layout = textLayoutCache.get(cacheKey);
+
+            if (layout === undefined) {
+                layout = computeTextLayout(text, screenW, screenH);
+                if (textLayoutCache.size > 2000) textLayoutCache.clear();
+                textLayoutCache.set(cacheKey, layout);
+            }
+
+            if (!layout) return;
+
+            let { bestFontSize, bestLines } = layout;
             let lineHeight = bestFontSize * 1.2;
             let totalHeight = bestLines.length * lineHeight;
 
@@ -474,19 +505,18 @@
                     let minJ = Math.max(0, Math.floor((0 - startY) / stepScreenY));
                     let maxJ = Math.min(GRID_DIVISIONS, Math.ceil((viewH - startY) / stepScreenY));
 
+                    // FIX 2: Direct fill calls instead of ctx.rect path building loop
                     if (minI <= maxI && minJ <= maxJ) {
                         ctx.fillStyle = `hsla(${pale.hue}, 40%, 82%, ${gridAlpha.toFixed(3)})`;
-                        ctx.beginPath();
                         let dotSize = Math.max(0.8, Math.min(1.8, minStepScreen * 0.08));
 
                         for (let i = minI; i <= maxI; i++) {
                             let px = startX + i * stepScreenX;
                             for (let j = minJ; j <= maxJ; j++) {
                                 let py = startY + j * stepScreenY;
-                                ctx.rect(px - dotSize / 2, py - dotSize / 2, dotSize, dotSize);
+                                ctx.fillRect(px - dotSize / 2, py - dotSize / 2, dotSize, dotSize);
                             }
                         }
-                        ctx.fill();
                     }
                 }
             }
@@ -516,7 +546,6 @@
 	    function drawGizmo(sx, sy, alpha, hue = 200) {
 			ctx.save();
 
-            // Lower base alpha multiplier for higher overall transparency
             const gAlpha = alpha * 0.45;
 
 			ctx.beginPath();
@@ -599,6 +628,7 @@
             return null;
         }
 
+        // FIX 4: Fast bounding box early exit to speed up mouse movement hit testing
         function findBorderTarget(root, clientX, clientY) {
             let best = null;
             let bestDelta = Infinity;
@@ -617,49 +647,54 @@
                     let hh = screenH / 2;
                     let hitMargin = Math.max(6, Math.min(15, Math.min(screenW, screenH) * 0.15));
 
-                    let leftEdge = screenX - hw;
-                    let rightEdge = screenX + hw;
-                    let topEdge = screenY - hh;
-                    let bottomEdge = screenY + hh;
+                    // Early bounding box check
+                    if (clientX >= screenX - hw - hitMargin && clientX <= screenX + hw + hitMargin &&
+                        clientY >= screenY - hh - hitMargin && clientY <= screenY + hh + hitMargin) {
 
-                    let distLeft = Math.abs(clientX - leftEdge);
-                    let distRight = Math.abs(clientX - rightEdge);
-                    let distTop = Math.abs(clientY - topEdge);
-                    let distBottom = Math.abs(clientY - bottomEdge);
+                        let leftEdge = screenX - hw;
+                        let rightEdge = screenX + hw;
+                        let topEdge = screenY - hh;
+                        let bottomEdge = screenY + hh;
 
-                    let inYRange = (clientY >= topEdge - hitMargin) && (clientY <= bottomEdge + hitMargin);
-                    let inXRange = (clientX >= leftEdge - hitMargin) && (clientX <= rightEdge + hitMargin);
+                        let distLeft = Math.abs(clientX - leftEdge);
+                        let distRight = Math.abs(clientX - rightEdge);
+                        let distTop = Math.abs(clientY - topEdge);
+                        let distBottom = Math.abs(clientY - bottomEdge);
 
-                    let nearLeft = distLeft <= hitMargin && inYRange;
-                    let nearRight = distRight <= hitMargin && inYRange;
-                    let nearTop = distTop <= hitMargin && inXRange;
-                    let nearBottom = distBottom <= hitMargin && inXRange;
+                        let inYRange = (clientY >= topEdge - hitMargin) && (clientY <= bottomEdge + hitMargin);
+                        let inXRange = (clientX >= leftEdge - hitMargin) && (clientX <= rightEdge + hitMargin);
 
-                    if (nearLeft || nearRight || nearTop || nearBottom) {
-                        let dirX = 0;
-                        if (nearLeft && nearRight) dirX = distLeft <= distRight ? -1 : 1;
-                        else if (nearLeft) dirX = -1;
-                        else if (nearRight) dirX = 1;
+                        let nearLeft = distLeft <= hitMargin && inYRange;
+                        let nearRight = distRight <= hitMargin && inYRange;
+                        let nearTop = distTop <= hitMargin && inXRange;
+                        let nearBottom = distBottom <= hitMargin && inXRange;
 
-                        let dirY = 0;
-                        if (nearTop && nearBottom) dirY = distTop <= distBottom ? -1 : 1;
-                        else if (nearTop) dirY = -1;
-                        else if (nearBottom) dirY = 1;
+                        if (nearLeft || nearRight || nearTop || nearBottom) {
+                            let dirX = 0;
+                            if (nearLeft && nearRight) dirX = distLeft <= distRight ? -1 : 1;
+                            else if (nearLeft) dirX = -1;
+                            else if (nearRight) dirX = 1;
 
-                        let delta = Math.min(
-                            nearLeft ? distLeft : Infinity,
-                            nearRight ? distRight : Infinity,
-                            nearTop ? distTop : Infinity,
-                            nearBottom ? distBottom : Infinity
-                        );
+                            let dirY = 0;
+                            if (nearTop && nearBottom) dirY = distTop <= distBottom ? -1 : 1;
+                            else if (nearTop) dirY = -1;
+                            else if (nearBottom) dirY = 1;
 
-                        if (delta < bestDelta) {
-                            bestDelta = delta;
-                            best = {
-                                bubble: b,
-                                dirX: dirX,
-                                dirY: dirY
-                            };
+                            let delta = Math.min(
+                                nearLeft ? distLeft : Infinity,
+                                nearRight ? distRight : Infinity,
+                                nearTop ? distTop : Infinity,
+                                nearBottom ? distBottom : Infinity
+                            );
+
+                            if (delta < bestDelta) {
+                                bestDelta = delta;
+                                best = {
+                                    bubble: b,
+                                    dirX: dirX,
+                                    dirY: dirY
+                                };
+                            }
                         }
                     }
                 }
@@ -885,14 +920,14 @@
                 } 
                 
                 else if (interactionMode === 'move' && activeBubble) {
-                    let wCoords = getRawWorldCoords(clientX, clientY);
+                    let wCoords = getRawWorldCoords(clientX, clientY, tempWorldCoords);
                     canvas.style.cursor = 'move';
                     let targetX = wCoords.x - dragOffsetWorldX;
                     let targetY = wCoords.y - dragOffsetWorldY;
 
                     let parent = findParent(rootBubble, activeBubble.id);
                     if (parent) {
-                        let snapped = snapChildPositionToParent(targetX, targetY, activeBubble.w, activeBubble.h, parent);
+                        let snapped = snapChildPositionToParent(targetX, targetY, activeBubble.w, activeBubble.h, parent, tempSnappedCoords);
                         targetX = snapped.x;
                         targetY = snapped.y;
 
@@ -909,7 +944,7 @@
                                     targetX = wCoords.x - dragOffsetWorldX;
                                     targetY = wCoords.y - dragOffsetWorldY;
                                     
-                                    let snappedGp = snapChildPositionToParent(targetX, targetY, activeBubble.w, activeBubble.h, parent);
+                                    let snappedGp = snapChildPositionToParent(targetX, targetY, activeBubble.w, activeBubble.h, parent, tempSnappedCoords);
                                     targetX = snappedGp.x;
                                     targetY = snappedGp.y;
                                 } else {
@@ -934,7 +969,7 @@
                                     targetX = wCoords.x - dragOffsetWorldX;
                                     targetY = wCoords.y - dragOffsetWorldY;
                                     
-                                    let snappedSib = snapChildPositionToParent(targetX, targetY, activeBubble.w, activeBubble.h, parent);
+                                    let snappedSib = snapChildPositionToParent(targetX, targetY, activeBubble.w, activeBubble.h, parent, tempSnappedCoords);
                                     targetX = snappedSib.x;
                                     targetY = snappedSib.y;
                                     reparented = true;
@@ -980,7 +1015,7 @@
                             if (!moved) break;
                         }
 
-                        let finalSnapped = snapChildPositionToParent(targetX, targetY, activeBubble.w, activeBubble.h, parent);
+                        let finalSnapped = snapChildPositionToParent(targetX, targetY, activeBubble.w, activeBubble.h, parent, tempSnappedCoords);
                         targetX = finalSnapped.x;
                         targetY = finalSnapped.y;
                     }
@@ -1121,7 +1156,7 @@
             lastMouseX = clientX;
             lastMouseY = clientY;
 
-            let wCoords = getRawWorldCoords(clientX, clientY);
+            let wCoords = getRawWorldCoords(clientX, clientY, tempWorldCoords);
             let deepTarget = findDeepestBubble(rootBubble, wCoords.x, wCoords.y);
             let overGizmo = false;
 
@@ -1170,7 +1205,7 @@
         }, { passive: false });
 
         canvas.addEventListener('dblclick', e => {
-            let wCoords = getRawWorldCoords(e.clientX, e.clientY);
+            let wCoords = getRawWorldCoords(e.clientX, e.clientY, tempWorldCoords);
             let target = findDeepestBubble(rootBubble, wCoords.x, wCoords.y);
             
             if (target) {
@@ -1205,7 +1240,7 @@
                     let maxAllowedDx = (target.w - newW) / 2;
                     let maxAllowedDy = (target.h - newH) / 2;
 
-                    let snapped = snapChildPositionToParent(wCoords.x, wCoords.y, newW, newH, target);
+                    let snapped = snapChildPositionToParent(wCoords.x, wCoords.y, newW, newH, target, tempSnappedCoords);
                     let spawnX = snapped.x;
                     let spawnY = snapped.y;
 
@@ -1248,7 +1283,7 @@
 
         canvas.addEventListener('contextmenu', e => {
             e.preventDefault(); 
-            let wCoords = getRawWorldCoords(e.clientX, e.clientY);
+            let wCoords = getRawWorldCoords(e.clientX, e.clientY, tempWorldCoords);
             let target = findDeepestBubble(rootBubble, wCoords.x, wCoords.y);
             
             if (target) {

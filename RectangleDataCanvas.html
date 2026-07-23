@@ -404,13 +404,28 @@
             let minDim = Math.min(screenW, screenH);
             if (minDim < 10) return; 
 
-            // Key on text string and rounded display dimensions
-            let cacheKey = `${text}_${Math.round(screenW)}_${Math.round(screenH)}`;
+            // Key on text string and display dimensions, bucketed to a coarse grid.
+            // During continuous zoom/pan, screenW/H change by fractions of a pixel every
+            // frame; rounding to the nearest integer pixel (the old behavior) meant the
+            // key almost never repeated, so the "cache" was recomputing the binary-search
+            // text layout (many ctx.measureText calls) on every single frame. Bucketing to
+            // the nearest 4px trades imperceptible layout precision for a much higher hit
+            // rate while the camera is moving.
+            const LAYOUT_BUCKET = 4;
+            let bucketedW = Math.round(screenW / LAYOUT_BUCKET) * LAYOUT_BUCKET;
+            let bucketedH = Math.round(screenH / LAYOUT_BUCKET) * LAYOUT_BUCKET;
+            let cacheKey = `${text}_${bucketedW}_${bucketedH}`;
             let layout = textLayoutCache.get(cacheKey);
 
             if (layout === undefined) {
                 layout = computeTextLayout(text, screenW, screenH);
-                if (textLayoutCache.size > 2000) textLayoutCache.clear();
+                // Evict the single oldest entry (Map preserves insertion order) instead of
+                // clearing the whole cache, so we don't get a sudden burst of cache misses
+                // (and the associated re-layout cost) right after the cap is hit.
+                if (textLayoutCache.size > 2000) {
+                    const oldestKey = textLayoutCache.keys().next().value;
+                    textLayoutCache.delete(oldestKey);
+                }
                 textLayoutCache.set(cacheKey, layout);
             }
 
@@ -612,6 +627,16 @@
             let maxDim = Math.max(b.w, b.h) * camera.zoom;
             if (maxDim * alphaMultiplier < 0.5) return null; 
 
+            // Since children are always nested inside their parent's bounds, a parent that
+            // doesn't intersect the viewport can be skipped entirely (matches the cull draw()
+            // already does). This keeps hover/hit-testing cheap even for huge off-screen trees.
+            let screenX = (b.x - camera.x) * camera.zoom + viewW / 2;
+            let screenY = (b.y - camera.y) * camera.zoom + viewH / 2;
+            let screenW = b.w * camera.zoom;
+            let screenH = b.h * camera.zoom;
+            if (screenX + screenW / 2 < 0 || screenX - screenW / 2 > viewW ||
+                screenY + screenH / 2 < 0 || screenY - screenH / 2 > viewH) return null;
+
             let avgDim = (b.w + b.h) / 2 * camera.zoom;
             let childrenFade = Math.max(0, Math.min(1, (avgDim - 200) / 300));
             let nextAlphaMultiplier = alphaMultiplier * childrenFade;
@@ -641,6 +666,13 @@
 
                 let maxDim = Math.max(screenW, screenH);
                 if (maxDim * alphaMultiplier < 0.5) return;
+
+                // Same off-screen cull as drawBubble()/findDeepestBubble(): a bubble whose
+                // bounds don't overlap the viewport (even padded by the hit margin) can't
+                // contain the cursor, and neither can any of its nested children.
+                let cullMargin = 20;
+                if (screenX + screenW / 2 + cullMargin < 0 || screenX - screenW / 2 - cullMargin > viewW ||
+                    screenY + screenH / 2 + cullMargin < 0 || screenY - screenH / 2 - cullMargin > viewH) return;
 
                 if (screenW >= 6 && screenH >= 6) {
                     let hw = screenW / 2;
@@ -838,6 +870,13 @@
 
             let allBubbles = [];
             function collect(b, alphaMultiplier) { 
+                let screenX = (b.x - camera.x) * camera.zoom + viewW / 2;
+                let screenY = (b.y - camera.y) * camera.zoom + viewH / 2;
+                let screenW = b.w * camera.zoom;
+                let screenH = b.h * camera.zoom;
+                if (screenX + screenW / 2 < 0 || screenX - screenW / 2 > viewW ||
+                    screenY + screenH / 2 < 0 || screenY - screenH / 2 > viewH) return;
+
                 let minDim = Math.min(b.w, b.h) * camera.zoom;
                 if (minDim > 25 && alphaMultiplier > 0.15) {
                     allBubbles.push(b); 
@@ -1310,10 +1349,17 @@
         });
 
         function bufToBase64(buf) {
-            let binary = '';
+            // Convert in chunks via String.fromCharCode.apply instead of one char at a
+            // time. For large canvases (lots of rectangles) the exported JSON can be
+            // sizeable, and building the intermediate binary string one character-append
+            // per byte is far slower than batching the conversion.
             const bytes = new Uint8Array(buf);
-            for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-            return btoa(binary);
+            const CHUNK_SIZE = 0x8000;
+            let chunks = [];
+            for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+                chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK_SIZE)));
+            }
+            return btoa(chunks.join(''));
         }
 
         function base64ToBuf(b64) {

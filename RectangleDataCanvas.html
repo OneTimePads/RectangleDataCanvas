@@ -188,7 +188,8 @@
             }
         });
 
-        const GIZMO_RADIUS = 14;
+        // Reduced gizmo radius from 14 to 9 for a smaller footprint
+        const GIZMO_RADIUS = 9;
         const GRID_DIVISIONS = 50; 
 
         const DEFAULT_RECT_SCREEN_W = 120;
@@ -468,7 +469,6 @@
                     let startX = screenX - screenW / 2;
                     let startY = screenY - screenH / 2;
 
-                    // VIEWPORT GRID CULLING FIX: Only iterate visible grid dots
                     let minI = Math.max(0, Math.floor((0 - startX) / stepScreenX));
                     let maxI = Math.min(GRID_DIVISIONS, Math.ceil((viewW - startX) / stepScreenX));
                     let minJ = Math.max(0, Math.floor((0 - startY) / stepScreenY));
@@ -515,43 +515,53 @@
 
 	    function drawGizmo(sx, sy, alpha, hue = 200) {
 			ctx.save();
+
+            // Lower base alpha multiplier for higher overall transparency
+            const gAlpha = alpha * 0.45;
+
 			ctx.beginPath();
 			ctx.arc(sx, sy, GIZMO_RADIUS, 0, Math.PI * 2);
-			ctx.fillStyle = `rgba(25, 28, 36, ${alpha * 0.9})`;
+			ctx.fillStyle = `rgba(25, 28, 36, ${gAlpha * 0.7})`;
 			ctx.fill();
-			ctx.strokeStyle = `hsla(${hue}, 40%, 75%, ${alpha * 0.8})`;
-			ctx.lineWidth = 1.5;
+			ctx.strokeStyle = `hsla(${hue}, 40%, 75%, ${gAlpha * 0.85})`;
+			ctx.lineWidth = 1.0;
+			ctx.stroke();
+
+            const inset = 2.5;
+            const arrowOffset = 2;
+
+			ctx.beginPath();
+			ctx.moveTo(sx - GIZMO_RADIUS + inset, sy);
+			ctx.lineTo(sx + GIZMO_RADIUS - inset, sy);
+			ctx.moveTo(sx, sy - GIZMO_RADIUS + inset);
+			ctx.lineTo(sx, sy + GIZMO_RADIUS - inset);
+			ctx.strokeStyle = `hsla(${hue}, 40%, 80%, ${gAlpha})`;
+			ctx.lineWidth = 1.0;
 			ctx.stroke();
 
 			ctx.beginPath();
-			ctx.moveTo(sx - GIZMO_RADIUS + 4, sy);
-			ctx.lineTo(sx + GIZMO_RADIUS - 4, sy);
-			ctx.moveTo(sx, sy - GIZMO_RADIUS + 4);
-			ctx.lineTo(sx, sy + GIZMO_RADIUS - 4);
-			ctx.strokeStyle = `hsla(${hue}, 40%, 80%, ${alpha})`;
-			ctx.lineWidth = 1.5;
-			ctx.stroke();
+			ctx.moveTo(sx - GIZMO_RADIUS + inset, sy);
+			ctx.lineTo(sx - GIZMO_RADIUS + inset + arrowOffset, sy - arrowOffset);
+			ctx.moveTo(sx - GIZMO_RADIUS + inset, sy);
+			ctx.lineTo(sx - GIZMO_RADIUS + inset + arrowOffset, sy + arrowOffset);
 
-			ctx.beginPath();
-			ctx.moveTo(sx - GIZMO_RADIUS + 4, sy);
-			ctx.lineTo(sx - GIZMO_RADIUS + 7, sy - 3);
-			ctx.moveTo(sx - GIZMO_RADIUS + 4, sy);
-			ctx.lineTo(sx - GIZMO_RADIUS + 7, sy + 3);
-			ctx.moveTo(sx + GIZMO_RADIUS - 4, sy);
-			ctx.lineTo(sx + GIZMO_RADIUS - 7, sy - 3);
-			ctx.moveTo(sx + GIZMO_RADIUS - 4, sy);
-			ctx.lineTo(sx + GIZMO_RADIUS - 7, sy + 3);
-			ctx.moveTo(sx, sy - GIZMO_RADIUS + 4);
-			ctx.lineTo(sx - 3, sy - GIZMO_RADIUS + 7);
-			ctx.moveTo(sx, sy - GIZMO_RADIUS + 4);
-			ctx.lineTo(sx + 3, sy - GIZMO_RADIUS + 7);
-			ctx.moveTo(sx, sy + GIZMO_RADIUS - 4);
-			ctx.lineTo(sx - 3, sy + GIZMO_RADIUS - 7);
-			ctx.moveTo(sx, sy + GIZMO_RADIUS - 4);
-			ctx.lineTo(sx + 3, sy + GIZMO_RADIUS - 7);
+			ctx.moveTo(sx + GIZMO_RADIUS - inset, sy);
+			ctx.lineTo(sx + GIZMO_RADIUS - inset - arrowOffset, sy - arrowOffset);
+			ctx.moveTo(sx + GIZMO_RADIUS - inset, sy);
+			ctx.lineTo(sx + GIZMO_RADIUS - inset - arrowOffset, sy + arrowOffset);
 
-			ctx.strokeStyle = `hsla(${hue}, 40%, 80%, ${alpha})`;
-			ctx.lineWidth = 1.2;
+			ctx.moveTo(sx, sy - GIZMO_RADIUS + inset);
+			ctx.lineTo(sx - arrowOffset, sy - GIZMO_RADIUS + inset + arrowOffset);
+			ctx.moveTo(sx, sy - GIZMO_RADIUS + inset);
+			ctx.lineTo(sx + arrowOffset, sy - GIZMO_RADIUS + inset + arrowOffset);
+
+			ctx.moveTo(sx, sy + GIZMO_RADIUS - inset);
+			ctx.lineTo(sx - arrowOffset, sy + GIZMO_RADIUS - inset - arrowOffset);
+			ctx.moveTo(sx, sy + GIZMO_RADIUS - inset);
+			ctx.lineTo(sx + arrowOffset, sy + GIZMO_RADIUS - inset - arrowOffset);
+
+			ctx.strokeStyle = `hsla(${hue}, 40%, 80%, ${gAlpha})`;
+			ctx.lineWidth = 1.0;
 			ctx.stroke();
 			ctx.restore();
 		}
@@ -589,7 +599,6 @@
             return null;
         }
 
-        // Finds border or corner handle hit target
         function findBorderTarget(root, clientX, clientY) {
             let best = null;
             let bestDelta = Infinity;
@@ -833,7 +842,6 @@
                     
                     originalResizeBubbleState = cloneBubbleHierarchy(activeBubble);
                     
-                    // FIX: Replaced 1e-5 clamp with Number.EPSILON to support giant zoom sizes
                     resizeStartW = Math.max(Number.EPSILON, activeBubble.w);
                     resizeStartH = Math.max(Number.EPSILON, activeBubble.h);
                     resizeStartClientX = e.clientX;
@@ -998,7 +1006,6 @@
                     let deltaX = (clientX - resizeStartClientX) / effectiveZoomX;
                     let deltaY = (clientY - resizeStartClientY) / effectiveZoomY;
 
-                    // FIX: Replaced 1e-5 clamp with Number.EPSILON
                     let stepX = Math.max(Number.EPSILON, resizeGridX);
                     let stepY = Math.max(Number.EPSILON, resizeGridY);
 
@@ -1007,7 +1014,6 @@
 
                     let parent = findParent(rootBubble, activeBubble.id);
                     if (!parent) {
-                        // FIX: Removed hardcoded Math.max(10, ...) floor on root bubble size
                         let absoluteMinSize = MIN_SCREEN_SIZE / camera.zoom;
                         minW = Math.max(stepX, Math.ceil(absoluteMinSize / stepX) * stepX);
                         minH = Math.max(stepY, Math.ceil(absoluteMinSize / stepY) * stepY);
@@ -1024,7 +1030,6 @@
                     let maxW = Infinity;
                     let maxH = Infinity;
 
-                    // FIX: Dynamic zoom-dependent epsilon for collision calculations
                     let worldEpsilon = 1.0 / Math.max(1, camera.zoom);
 
                     if (parent) {

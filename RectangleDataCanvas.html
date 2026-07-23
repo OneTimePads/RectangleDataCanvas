@@ -209,7 +209,6 @@
             children: []
         };
 
-        // FIX 3: Cache pale colors per ID to prevent recalculation on every frame
         const paleColorCache = new Map();
         function getPaleColor(id) {
             if (!id) return { hue: 0, saturation: 35, lightness: 75 };
@@ -280,7 +279,6 @@
         window.addEventListener('resize', resize);
         resize();
 
-        // FIX 5: Shared reusable objects to prevent GC thrashing during drag loops
         const tempWorldCoords = { x: 0, y: 0 };
         function getRawWorldCoords(clientX, clientY, outObj) {
             let res = outObj || tempWorldCoords;
@@ -346,7 +344,6 @@
             return lines;
         }
 
-        // FIX 1: Memoize expensive text wrapping & binary font-size calculations
         const textLayoutCache = new Map();
 
         function computeTextLayout(text, screenW, screenH) {
@@ -398,19 +395,12 @@
             return { bestFontSize, bestLines };
         }
 
-        function drawWrappedText(text, screenX, screenY, screenW, screenH, alpha) {
+        function drawWrappedText(text, screenX, screenY, screenW, screenH, alpha, hue = 200) {
             if (!text || !text.trim()) return;
 
             let minDim = Math.min(screenW, screenH);
             if (minDim < 10) return; 
 
-            // Key on text string and display dimensions, bucketed to a coarse grid.
-            // During continuous zoom/pan, screenW/H change by fractions of a pixel every
-            // frame; rounding to the nearest integer pixel (the old behavior) meant the
-            // key almost never repeated, so the "cache" was recomputing the binary-search
-            // text layout (many ctx.measureText calls) on every single frame. Bucketing to
-            // the nearest 4px trades imperceptible layout precision for a much higher hit
-            // rate while the camera is moving.
             const LAYOUT_BUCKET = 4;
             let bucketedW = Math.round(screenW / LAYOUT_BUCKET) * LAYOUT_BUCKET;
             let bucketedH = Math.round(screenH / LAYOUT_BUCKET) * LAYOUT_BUCKET;
@@ -419,9 +409,6 @@
 
             if (layout === undefined) {
                 layout = computeTextLayout(text, screenW, screenH);
-                // Evict the single oldest entry (Map preserves insertion order) instead of
-                // clearing the whole cache, so we don't get a sudden burst of cache misses
-                // (and the associated re-layout cost) right after the cap is hit.
                 if (textLayoutCache.size > 2000) {
                     const oldestKey = textLayoutCache.keys().next().value;
                     textLayoutCache.delete(oldestKey);
@@ -435,7 +422,7 @@
             let lineHeight = bestFontSize * 1.2;
             let totalHeight = bestLines.length * lineHeight;
 
-            ctx.fillStyle = `rgba(245, 248, 250, ${alpha})`;
+            ctx.fillStyle = `hsla(${hue}, 70%, 88%, ${alpha})`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.font = `300 ${bestFontSize}px sans-serif`;
@@ -520,7 +507,6 @@
                     let minJ = Math.max(0, Math.floor((0 - startY) / stepScreenY));
                     let maxJ = Math.min(GRID_DIVISIONS, Math.ceil((viewH - startY) / stepScreenY));
 
-                    // FIX 2: Direct fill calls instead of ctx.rect path building loop
                     if (minI <= maxI && minJ <= maxJ) {
                         ctx.fillStyle = `hsla(${pale.hue}, 40%, 82%, ${gridAlpha.toFixed(3)})`;
                         let dotSize = Math.max(0.8, Math.min(1.8, minStepScreen * 0.08));
@@ -545,7 +531,7 @@
             let finalTextAlpha = alphaMultiplier * textFade;
 
             if (finalTextAlpha > 0.01) {
-                drawWrappedText(b.text, screenX, screenY, screenW, screenH, finalTextAlpha);
+                drawWrappedText(b.text, screenX, screenY, screenW, screenH, finalTextAlpha, pale.hue);
             }
 
             let childrenFade = Math.max(0, Math.min(1, (avgDim - 200) / 300));
@@ -627,9 +613,6 @@
             let maxDim = Math.max(b.w, b.h) * camera.zoom;
             if (maxDim * alphaMultiplier < 0.5) return null; 
 
-            // Since children are always nested inside their parent's bounds, a parent that
-            // doesn't intersect the viewport can be skipped entirely (matches the cull draw()
-            // already does). This keeps hover/hit-testing cheap even for huge off-screen trees.
             let screenX = (b.x - camera.x) * camera.zoom + viewW / 2;
             let screenY = (b.y - camera.y) * camera.zoom + viewH / 2;
             let screenW = b.w * camera.zoom;
@@ -653,7 +636,6 @@
             return null;
         }
 
-        // FIX 4: Fast bounding box early exit to speed up mouse movement hit testing
         function findBorderTarget(root, clientX, clientY) {
             let best = null;
             let bestDelta = Infinity;
@@ -667,9 +649,6 @@
                 let maxDim = Math.max(screenW, screenH);
                 if (maxDim * alphaMultiplier < 0.5) return;
 
-                // Same off-screen cull as drawBubble()/findDeepestBubble(): a bubble whose
-                // bounds don't overlap the viewport (even padded by the hit margin) can't
-                // contain the cursor, and neither can any of its nested children.
                 let cullMargin = 20;
                 if (screenX + screenW / 2 + cullMargin < 0 || screenX - screenW / 2 - cullMargin > viewW ||
                     screenY + screenH / 2 + cullMargin < 0 || screenY - screenH / 2 - cullMargin > viewH) return;
@@ -679,7 +658,6 @@
                     let hh = screenH / 2;
                     let hitMargin = Math.max(6, Math.min(15, Math.min(screenW, screenH) * 0.15));
 
-                    // Early bounding box check
                     if (clientX >= screenX - hw - hitMargin && clientX <= screenX + hw + hitMargin &&
                         clientY >= screenY - hh - hitMargin && clientY <= screenY + hh + hitMargin) {
 
@@ -1349,10 +1327,6 @@
         });
 
         function bufToBase64(buf) {
-            // Convert in chunks via String.fromCharCode.apply instead of one char at a
-            // time. For large canvases (lots of rectangles) the exported JSON can be
-            // sizeable, and building the intermediate binary string one character-append
-            // per byte is far slower than batching the conversion.
             const bytes = new Uint8Array(buf);
             const CHUNK_SIZE = 0x8000;
             let chunks = [];

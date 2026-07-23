@@ -9,3 +9,6 @@ Features:
 * Save and load data locally or from files.
 
 Data files are encrypted with a password using a simple XOR-CBC encryption algorithm.
+
+Like circles more? Check this repository:
+https://github.com/OneTimePads/BubbleDataCanvas

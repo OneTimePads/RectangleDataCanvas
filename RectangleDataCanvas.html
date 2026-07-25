@@ -225,13 +225,13 @@
         }
 
         function ensureRectStructure(node) {
-            if (!node.w || node.w <= 0) node.w = 50;
-            if (!node.h || node.h <= 0) node.h = 50;
             if (node.r && (!node.w || !node.h)) {
                 node.w = node.r * 2;
                 node.h = node.r * 2;
                 delete node.r;
             }
+            if (!node.w || node.w <= 0) node.w = 50;
+            if (!node.h || node.h <= 0) node.h = 50;
             if (node.children) {
                 node.children.forEach(ensureRectStructure);
             }
@@ -807,6 +807,7 @@
 
         let interactionMode = 'none'; 
         let activeBubble = null;
+        let activeParent = null; // cached parent of activeBubble, kept in sync during drag/resize to avoid a full-tree findParent() search on every pointermove
         let resizeDirX = 0;
         let resizeDirY = 0;
         let lastMouseX = 0;
@@ -829,6 +830,7 @@
         function cancelInteraction() {
             interactionMode = "none";
             activeBubble = null;
+            activeParent = null;
             resizeDirX = 0;
             resizeDirY = 0;
             originalResizeBubbleState = null;
@@ -877,6 +879,7 @@
                 
                 if (e.button === 0 && screenDistToCenter <= GIZMO_RADIUS) {
                     activeBubble = b;
+                    activeParent = findParent(rootBubble, b.id);
                     interactionMode = 'move';
                     dragOffsetWorldX = wCoords.x - b.x;
                     dragOffsetWorldY = wCoords.y - b.y;
@@ -904,6 +907,7 @@
                     resizeStartBrY = resizeStartTlY + resizeStartH;
 
                     let parent = findParent(rootBubble, activeBubble.id);
+                    activeParent = parent;
                     resizeGridX = parent ? parent.w / GRID_DIVISIONS : resizeStartW / GRID_DIVISIONS;
                     resizeGridY = parent ? parent.h / GRID_DIVISIONS : resizeStartH / GRID_DIVISIONS;
                     return;
@@ -942,7 +946,7 @@
                     let targetX = wCoords.x - dragOffsetWorldX;
                     let targetY = wCoords.y - dragOffsetWorldY;
 
-                    let parent = findParent(rootBubble, activeBubble.id);
+                    let parent = activeParent;
                     if (parent) {
                         let snapped = snapChildPositionToParent(targetX, targetY, activeBubble.w, activeBubble.h, parent, tempSnappedCoords);
                         targetX = snapped.x;
@@ -1035,6 +1039,8 @@
                         let finalSnapped = snapChildPositionToParent(targetX, targetY, activeBubble.w, activeBubble.h, parent, tempSnappedCoords);
                         targetX = finalSnapped.x;
                         targetY = finalSnapped.y;
+
+                        activeParent = parent; // keep cache in sync with any reparenting that happened above
                     }
 
                     let deltaX = targetX - activeBubble.x;
@@ -1064,7 +1070,7 @@
                     let minW = stepX;
                     let minH = stepY;
 
-                    let parent = findParent(rootBubble, activeBubble.id);
+                    let parent = activeParent;
                     if (!parent) {
                         let absoluteMinSize = MIN_SCREEN_SIZE / camera.zoom;
                         minW = Math.max(stepX, Math.ceil(absoluteMinSize / stepX) * stepX);
@@ -1199,6 +1205,7 @@
         window.addEventListener('mouseup', () => {
             interactionMode = 'none';
             activeBubble = null;
+            activeParent = null;
             resizeDirX = 0;
             resizeDirY = 0;
             originalResizeBubbleState = null;
@@ -1343,41 +1350,56 @@
             return bytes.buffer;
         }
 
-        function encryptCustom(plaintext, password) {
-            let hash = 0;
+        // 32-bit FNV-1a hash: gives the password's full entropy a seed,
+        // instead of collapsing it to a single byte.
+        function hashPasswordSeed(password) {
+            let hash = 2166136261;
             for (let i = 0; i < password.length; i++) {
-                hash = (hash * 31 + password.charCodeAt(i)) & 0xFF;
+                hash ^= password.charCodeAt(i);
+                hash = Math.imul(hash, 16777619);
             }
+            return hash >>> 0;
+        }
+
+        // mulberry32-based keystream generator, seeded from the password.
+        // Every byte's key comes from the password-derived stream, not from
+        // previously emitted ciphertext, so knowing/guessing part of the
+        // ciphertext or plaintext gives no shortcut to the rest.
+        function createKeystream(seed) {
+            let a = seed;
+            return function nextByte() {
+                a |= 0; a = (a + 0x6D2B79F5) | 0;
+                let t = Math.imul(a ^ (a >>> 15), 1 | a);
+                t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+                t = (t ^ (t >>> 14)) >>> 0;
+                return t & 0xFF;
+            };
+        }
+
+        function encryptCustom(plaintext, password) {
+            const nextByte = createKeystream(hashPasswordSeed(password));
 
             const encoder = new TextEncoder();
             const pBytes = encoder.encode(plaintext);
             const cBytes = new Uint8Array(pBytes.length);
 
-            let prev = hash;
             for (let i = 0; i < pBytes.length; i++) {
-                cBytes[i] = pBytes[i] ^ prev;
-                prev = cBytes[i]; 
+                cBytes[i] = pBytes[i] ^ nextByte();
             }
             return bufToBase64(cBytes.buffer);
         }
 
         function decryptCustom(ciphertextB64, password) {
-            let hash = 0;
-            for (let i = 0; i < password.length; i++) {
-                hash = (hash * 31 + password.charCodeAt(i)) & 0xFF;
-            }
+            const nextByte = createKeystream(hashPasswordSeed(password));
 
             const cBytes = new Uint8Array(base64ToBuf(ciphertextB64));
             const pBytes = new Uint8Array(cBytes.length);
 
-            let prev = hash;
             for (let i = 0; i < cBytes.length; i++) {
-                let currentCipher = cBytes[i];
-                pBytes[i] = currentCipher ^ prev;
-                prev = currentCipher;
+                pBytes[i] = cBytes[i] ^ nextByte();
             }
 
-            const decoder = new TextDecoder();
+            const decoder = new TextDecoder('utf-8', { fatal: true });
             return decoder.decode(pBytes);
         }
 
@@ -1385,8 +1407,8 @@
             const ciphertext = encryptCustom(JSON.stringify(obj), password);
             return {
                 encrypted: true,
-                version: 2,
-                cipher: 'XOR-CBC',
+                version: 3,
+                cipher: 'XOR-Stream-v2',
                 ciphertext: ciphertext
             };
         }

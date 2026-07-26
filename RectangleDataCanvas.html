@@ -163,7 +163,7 @@
         <b>Scroll</b>: Fast Zoom In/Out<br>
         <b>MMB (scroll button)</b>: Pan Canvas<br>
         <b>Drag Center ⊕ Gizmo</b>: Move Rectangle (Snaps to 50x50 Rectangle Grid)<br>
-        <b>Drag Border/Corner</b>: Resize Rectangle (Snaps to 50x50 Rectangle Grid)<br>
+        <b>Drag Border/Corner</b>: Resize Rectangle (Hold Shift: move border only, do not resize children)<br>
         <b>Double-Click</b>: Add Nested Rectangle<br>
         <b>Shift + Double-Click</b>: Add Smaller Nested Rectangle<br>
         <b>Right-Click</b>: Edit Text. Clear it to delete<br>
@@ -259,6 +259,25 @@
         let pendingPointerY = 0;
         let pendingPointerButtons = 0;
         let pointerMoveQueued = false;
+        let isShiftPressed = false;
+
+        window.addEventListener('keydown', e => {
+            if (e.key === 'Shift') {
+                isShiftPressed = true;
+                if (interactionMode === 'resize') {
+                    pointerMoveQueued = true;
+                }
+            }
+        });
+
+        window.addEventListener('keyup', e => {
+            if (e.key === 'Shift') {
+                isShiftPressed = false;
+                if (interactionMode === 'resize') {
+                    pointerMoveQueued = true;
+                }
+            }
+        });
 
         function markChanged() {
             needsRedraw = true;
@@ -927,6 +946,7 @@
             pendingPointerX = e.clientX;
             pendingPointerY = e.clientY;
             pendingPointerButtons = e.buttons;
+            isShiftPressed = e.shiftKey;
             pointerMoveQueued = true;
         }, { passive: true });
 
@@ -1176,7 +1196,14 @@
                     let originX = resizeDirX === -1 ? resizeStartBrX : resizeStartTlX;
                     let originY = resizeDirY === -1 ? resizeStartBrY : resizeStartTlY;
 
-                    scaleBubbleHierarchy(activeBubble, scaleX, scaleY, originX, originY);
+                    if (isShiftPressed) {
+                        activeBubble.x = originX + (activeBubble.x - originX) * scaleX;
+                        activeBubble.y = originY + (activeBubble.y - originY) * scaleY;
+                        activeBubble.w *= scaleX;
+                        activeBubble.h *= scaleY;
+                    } else {
+                        scaleBubbleHierarchy(activeBubble, scaleX, scaleY, originX, originY);
+                    }
 
                     markChanged();
                 }

@@ -210,7 +210,7 @@
         };
 
         const paleColorCache = new Map();
-        const GOLDEN_ANGLE = 137.508; // guarantees a large, even hue separation from parent
+        const GOLDEN_ANGLE = 137.508; 
 
         function getPaleColor(id, parentHue, siblingIndex) {
             if (!id) return { hue: 0, saturation: 35, lightness: 75 };
@@ -218,17 +218,12 @@
 
             let hue;
             if (parentHue === undefined || parentHue === null) {
-                // Root (or orphaned) bubble: seed from its own id hash, as before.
                 let hash = 0;
                 for (let i = 0; i < id.length; i++) {
                     hash = id.charCodeAt(i) + ((hash << 5) - hash);
                 }
                 hue = Math.abs(hash) % 360;
             } else {
-                // Children rotate away from the parent's hue by the golden angle,
-                // stepped per sibling index. This keeps every child visually
-                // distinct from its own parent (large fixed hue jump) while
-                // spreading siblings evenly around the wheel.
                 hue = (parentHue + GOLDEN_ANGLE * (siblingIndex + 1)) % 360;
             }
 
@@ -468,7 +463,8 @@
 
             let pale = getPaleColor(b.id, parentHue, siblingIndex);
             let paleStroke = `hsla(${pale.hue}, ${pale.saturation}%, ${pale.lightness}%, ${alphaMultiplier * 0.85})`;
-            let paleFill = `hsla(${pale.hue}, ${pale.saturation - 10}%, ${pale.lightness - 55}%, ${alphaMultiplier * 0.4})`;
+            // Increased opacity multiplier from 0.4 to 0.8 to make backgrounds less transparent
+            let paleFill = `hsla(${pale.hue}, ${pale.saturation - 10}%, ${pale.lightness - 55}%, ${alphaMultiplier * 0.8})`;
 
 			if (isFullyCovering) {
 				ctx.fillStyle = `rgba(10, 10, 12, ${alphaMultiplier * 0.85})`;
@@ -820,7 +816,7 @@
 
         let interactionMode = 'none'; 
         let activeBubble = null;
-        let activeParent = null; // cached parent of activeBubble, kept in sync during drag/resize to avoid a full-tree findParent() search on every pointermove
+        let activeParent = null; 
         let resizeDirX = 0;
         let resizeDirY = 0;
         let lastMouseX = 0;
@@ -1053,7 +1049,7 @@
                         targetX = finalSnapped.x;
                         targetY = finalSnapped.y;
 
-                        activeParent = parent; // keep cache in sync with any reparenting that happened above
+                        activeParent = parent; 
                     }
 
                     let deltaX = targetX - activeBubble.x;
@@ -1363,8 +1359,6 @@
             return bytes.buffer;
         }
 
-        // 32-bit FNV-1a hash: gives the password's full entropy a seed,
-        // instead of collapsing it to a single byte.
         function hashPasswordSeed(password) {
             let hash = 2166136261;
             for (let i = 0; i < password.length; i++) {
@@ -1374,10 +1368,6 @@
             return hash >>> 0;
         }
 
-        // mulberry32-based keystream generator, seeded from the password.
-        // Every byte's key comes from the password-derived stream, not from
-        // previously emitted ciphertext, so knowing/guessing part of the
-        // ciphertext or plaintext gives no shortcut to the rest.
         function createKeystream(seed) {
             let a = seed;
             return function nextByte() {

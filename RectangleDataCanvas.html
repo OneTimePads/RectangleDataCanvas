@@ -463,7 +463,6 @@
 
             let pale = getPaleColor(b.id, parentHue, siblingIndex);
             let paleStroke = `hsla(${pale.hue}, ${pale.saturation}%, ${pale.lightness}%, ${alphaMultiplier * 0.85})`;
-            // Increased opacity multiplier from 0.4 to 0.8 to make backgrounds less transparent
             let paleFill = `hsla(${pale.hue}, ${pale.saturation - 10}%, ${pale.lightness - 55}%, ${alphaMultiplier * 0.8})`;
 
 			if (isFullyCovering) {
@@ -1283,20 +1282,50 @@
                     if (maxAllowedDy <= 0) spawnY = target.y;
                     else spawnY = Math.max(target.y - maxAllowedDy, Math.min(target.y + maxAllowedDy, spawnY));
 
-                    let overlapsSibling = false;
-                    for (let sibling of target.children) {
-                        let overlapX = (newW + sibling.w) / 2 - Math.abs(spawnX - sibling.x);
-                        let overlapY = (newH + sibling.h) / 2 - Math.abs(spawnY - sibling.y);
-                        if (overlapX > 0 && overlapY > 0) {
-                            overlapsSibling = true;
-                            break;
-                        }
-                    }
+                    // Iteratively shrink the rectangle if it intersects with any existing siblings
+                    for (let iter = 0; iter < 3; iter++) {
+                        let overlaps = false;
+                        for (let sibling of target.children) {
+                            let overlapX = (newW + sibling.w) / 2 - Math.abs(spawnX - sibling.x);
+                            let overlapY = (newH + sibling.h) / 2 - Math.abs(spawnY - sibling.y);
+                            
+                            if (overlapX > 0 && overlapY > 0) {
+                                overlaps = true;
+                                let gapX = Math.abs(spawnX - sibling.x) - sibling.w / 2;
+                                let gapY = Math.abs(spawnY - sibling.y) - sibling.h / 2;
 
-                    if (overlapsSibling) {
-                        pendingBubbleText = text.trim();
-                        alert("Cannot spawn rectangle here: intersects with an existing child.");
-                        return;
+                                if (gapX > 0 && gapY > 0) {
+                                    newW = Math.min(newW, Math.floor((gapX * 2) / stepX) * stepX);
+                                    newH = Math.min(newH, Math.floor((gapY * 2) / stepY) * stepY);
+                                } else if (gapX > 0) {
+                                    newW = Math.min(newW, Math.floor((gapX * 2) / stepX) * stepX);
+                                } else if (gapY > 0) {
+                                    newH = Math.min(newH, Math.floor((gapY * 2) / stepY) * stepY);
+                                } else {
+                                    newW = stepX;
+                                    newH = stepY;
+                                }
+                            }
+                        }
+                        
+                        if (newW < stepX) newW = stepX;
+                        if (newH < stepY) newH = stepY;
+
+                        // Re-snap alignment coordinates based on new shrunk size boundaries
+                        maxAllowedDx = (target.w - newW) / 2;
+                        maxAllowedDy = (target.h - newH) / 2;
+
+                        let reSnapped = snapChildPositionToParent(wCoords.x, wCoords.y, newW, newH, target, tempSnappedCoords);
+                        spawnX = reSnapped.x;
+                        spawnY = reSnapped.y;
+
+                        if (maxAllowedDx <= 0) spawnX = target.x;
+                        else spawnX = Math.max(target.x - maxAllowedDx, Math.min(target.x + maxAllowedDx, spawnX));
+
+                        if (maxAllowedDy <= 0) spawnY = target.y;
+                        else spawnY = Math.max(target.y - maxAllowedDy, Math.min(target.y + maxAllowedDy, spawnY));
+
+                        if (!overlaps) break;
                     }
 
                     pendingBubbleText = "";

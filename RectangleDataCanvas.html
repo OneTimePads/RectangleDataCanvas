@@ -69,15 +69,6 @@
             color: #0b0c10;
             box-shadow: 0 0 10px rgba(183, 228, 199, 0.4);
         }
-        #eraseLocalBtn {
-            border-color: #f0a6ca;
-            color: #ffc6ff;
-        }
-        #eraseLocalBtn:hover {
-            background: #f0a6ca;
-            color: #0b0c10;
-            box-shadow: 0 0 10px rgba(240, 166, 202, 0.4);
-        }
         .password-container {
             display: flex;
             align-items: center;
@@ -144,7 +135,6 @@
         <div class="buttonRow">
             <button id="exportBtn">Export Data</button>
             <button id="importBtn">Import Data</button>
-            <button id="eraseLocalBtn">Erase Local</button>
         </div>
 
         <div class="buttonRow">
@@ -1598,13 +1588,6 @@
                 //alert("Canvas successfully saved to local browser storage.");
             } catch (err) {
                 alert("Failed to save locally. Your storage might be full or blocked.");
-            }
-        });
-
-        document.getElementById('eraseLocalBtn').addEventListener('click', () => {
-            if (confirm("Are you sure you want to erase the locally stored data? This cannot be undone.")) {
-                localStorage.removeItem('bubbleCanvasLocalData');
-                alert("Local data has been permanently erased.");
             }
         });
 

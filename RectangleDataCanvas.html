@@ -108,6 +108,25 @@
             color: #0b0c10;
             box-shadow: 0 0 10px rgba(255, 209, 102, 0.4);
         }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+            color: #bde0fe;
+            font-size: 13px;
+            background: #191c24;
+            padding: 6px 12px;
+            border: 1px solid #a2d2ff;
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            width: 205px;
+        }
+        .slider-container input[type="range"] {
+            cursor: pointer;
+            accent-color: #a2d2ff;
+            flex-grow: 1;
+        }
 		#instructions {
 			position: fixed;
 			bottom: 20px;
@@ -141,6 +160,11 @@
             <button id="saveLocalBtn">💾 Save Local</button>
         </div>
 
+        <div class="slider-container">
+            <label for="intensitySlider">Intensity</label>
+            <input type="range" id="intensitySlider" min="0" max="100" value="100">
+        </div>
+
         <div class="password-container">
             <input type="password" id="cryptoPassword" placeholder="Encryption Password">
             <button id="togglePasswordBtn" title="Toggle Password Visibility">Show</button>
@@ -166,6 +190,14 @@
         const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
         const cryptoPasswordInput = document.getElementById('cryptoPassword');
         const togglePasswordBtn = document.getElementById('togglePasswordBtn');
+        const intensitySlider = document.getElementById('intensitySlider');
+
+        let colorIntensity = 1.0;
+
+        intensitySlider.addEventListener('input', (e) => {
+            colorIntensity = parseFloat(e.target.value) / 100;
+            markChanged();
+        });
 
         togglePasswordBtn.addEventListener('click', () => {
             if (cryptoPasswordInput.type === 'password') {
@@ -436,7 +468,8 @@
             let lineHeight = bestFontSize * 1.2;
             let totalHeight = bestLines.length * lineHeight;
 
-            ctx.fillStyle = `hsla(${hue}, 70%, 88%, ${alpha})`;
+            let textSat = 70 * colorIntensity;
+            ctx.fillStyle = `hsla(${hue}, ${textSat}%, 88%, ${alpha})`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.font = `300 ${bestFontSize}px sans-serif`;
@@ -468,8 +501,9 @@
                                    screenY - screenH / 2 <= 0 && screenY + screenH / 2 >= viewH);
 
             let pale = getPaleColor(b.id, parentHue, siblingIndex);
-            let paleStroke = `hsla(${pale.hue}, ${pale.saturation}%, ${pale.lightness}%, ${alphaMultiplier * 0.85})`;
-            let paleFill = `hsla(${pale.hue}, ${pale.saturation - 10}%, ${pale.lightness - 55}%, ${alphaMultiplier * 0.8})`;
+            let currentSat = pale.saturation * colorIntensity;
+            let paleStroke = `hsla(${pale.hue}, ${currentSat}%, ${pale.lightness}%, ${alphaMultiplier * 0.85})`;
+            let paleFill = `hsla(${pale.hue}, ${Math.max(0, currentSat - 10)}%, ${pale.lightness - 55}%, ${alphaMultiplier * 0.8})`;
 
 			if (isFullyCovering) {
 				ctx.fillStyle = `rgba(10, 10, 12, ${alphaMultiplier * 0.85})`;
@@ -522,7 +556,7 @@
                     let maxJ = Math.min(GRID_DIVISIONS, Math.ceil((viewH - startY) / stepScreenY));
 
                     if (minI <= maxI && minJ <= maxJ) {
-                        ctx.fillStyle = `hsla(${pale.hue}, 40%, 82%, ${gridAlpha.toFixed(3)})`;
+                        ctx.fillStyle = `hsla(${pale.hue}, ${40 * colorIntensity}%, 82%, ${gridAlpha.toFixed(3)})`;
                         let dotSize = Math.max(0.8, Math.min(1.8, minStepScreen * 0.08));
 
                         for (let i = minI; i <= maxI; i++) {
@@ -562,12 +596,13 @@
 			ctx.save();
 
             const gAlpha = alpha * 0.45;
+            const gizmoSat = 40 * colorIntensity;
 
 			ctx.beginPath();
 			ctx.arc(sx, sy, GIZMO_RADIUS, 0, Math.PI * 2);
 			ctx.fillStyle = `rgba(25, 28, 36, ${gAlpha * 0.7})`;
 			ctx.fill();
-			ctx.strokeStyle = `hsla(${hue}, 40%, 75%, ${gAlpha * 0.85})`;
+			ctx.strokeStyle = `hsla(${hue}, ${gizmoSat}%, 75%, ${gAlpha * 0.85})`;
 			ctx.lineWidth = 1.0;
 			ctx.stroke();
 
@@ -579,7 +614,7 @@
 			ctx.lineTo(sx + GIZMO_RADIUS - inset, sy);
 			ctx.moveTo(sx, sy - GIZMO_RADIUS + inset);
 			ctx.lineTo(sx, sy + GIZMO_RADIUS - inset);
-			ctx.strokeStyle = `hsla(${hue}, 40%, 80%, ${gAlpha})`;
+			ctx.strokeStyle = `hsla(${hue}, ${gizmoSat}%, 80%, ${gAlpha})`;
 			ctx.lineWidth = 1.0;
 			ctx.stroke();
 
@@ -604,7 +639,7 @@
 			ctx.moveTo(sx, sy + GIZMO_RADIUS - inset);
 			ctx.lineTo(sx + arrowOffset, sy + GIZMO_RADIUS - inset - arrowOffset);
 
-			ctx.strokeStyle = `hsla(${hue}, 40%, 80%, ${gAlpha})`;
+			ctx.strokeStyle = `hsla(${hue}, ${gizmoSat}%, 80%, ${gAlpha})`;
 			ctx.lineWidth = 1.0;
 			ctx.stroke();
 			ctx.restore();
@@ -1296,7 +1331,6 @@
                     if (maxAllowedDy <= 0) spawnY = target.y;
                     else spawnY = Math.max(target.y - maxAllowedDy, Math.min(target.y + maxAllowedDy, spawnY));
 
-                    // Iteratively shrink the rectangle if it intersects with any existing siblings
                     for (let iter = 0; iter < 3; iter++) {
                         let overlaps = false;
                         for (let sibling of target.children) {
@@ -1325,7 +1359,6 @@
                         if (newW < stepX) newW = stepX;
                         if (newH < stepY) newH = stepY;
 
-                        // Re-snap alignment coordinates based on new shrunk size boundaries
                         maxAllowedDx = (target.w - newW) / 2;
                         maxAllowedDy = (target.h - newH) / 2;
 
@@ -1465,7 +1498,7 @@
         }
 
         document.getElementById('exportBtn').addEventListener('click', () => {
-            const dataObj = { rootBubble, camera };
+            const dataObj = { rootBubble, camera, colorIntensity };
             let outputObj = dataObj;
             let filename = "patched_bubble_canvas.json";
 
@@ -1554,6 +1587,10 @@
                         rootBubble = payload.rootBubble;
                         ensureRectStructure(rootBubble);
                         if (payload.camera) camera = payload.camera;
+                        if (payload.colorIntensity !== undefined) {
+                            colorIntensity = payload.colorIntensity;
+                            intensitySlider.value = Math.round(colorIntensity * 100);
+                        }
                         markChanged();
                     } else {
                         alert("Malformed template dataset structure.");
@@ -1568,7 +1605,7 @@
         });
 
         document.getElementById('saveLocalBtn').addEventListener('click', () => {
-            const dataObj = { rootBubble, camera };
+            const dataObj = { rootBubble, camera, colorIntensity };
             let outputObj = dataObj;
 
             let password = cryptoPasswordInput.value;
@@ -1585,7 +1622,6 @@
             try {
                 localStorage.setItem('bubbleCanvasLocalData', JSON.stringify(outputObj));
                 hasUnsavedChanges = false;
-                //alert("Canvas successfully saved to local browser storage.");
             } catch (err) {
                 alert("Failed to save locally. Your storage might be full or blocked.");
             }
@@ -1633,6 +1669,10 @@
                         rootBubble = payload.rootBubble;
                         ensureRectStructure(rootBubble);
                         if (payload.camera) camera = payload.camera;
+                        if (payload.colorIntensity !== undefined) {
+                            colorIntensity = payload.colorIntensity;
+                            intensitySlider.value = Math.round(colorIntensity * 100);
+                        }
                         needsRedraw = true;
                         hasUnsavedChanges = false; 
                     }

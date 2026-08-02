@@ -194,9 +194,11 @@
         const intensitySlider = document.getElementById('intensitySlider');
 
         let colorIntensity = 1.0;
+        let currentCanvasFont = "";
 
         intensitySlider.addEventListener('input', (e) => {
             colorIntensity = parseFloat(e.target.value) / 100;
+            paleColorCache.clear(); // Flush cache on intensity change
             markChanged();
         });
 
@@ -211,6 +213,7 @@
         });
 
         const GIZMO_RADIUS = 9;
+        const GIZMO_RADIUS_SQ = GIZMO_RADIUS * GIZMO_RADIUS;
         const GRID_DIVISIONS = 50; 
 
         const DEFAULT_RECT_SCREEN_W = 120;
@@ -233,7 +236,7 @@
         const GOLDEN_ANGLE = 137.508; 
 
         function getPaleColor(id, parentHue, siblingIndex) {
-            if (!id) return { hue: 0, saturation: 35, lightness: 75 };
+            if (!id) return { hue: 0, saturation: 35, lightness: 75, paleStroke: '#777', paleFill: '#222', textFill: '#eee', dotFill: '#aaa' };
             if (paleColorCache.has(id)) return paleColorCache.get(id);
 
             let hue;
@@ -247,9 +250,47 @@
                 hue = (parentHue + GOLDEN_ANGLE * (siblingIndex + 1)) % 360;
             }
 
-            const res = { hue, saturation: 35, lightness: 75 };
+            let currentSat = 35 * colorIntensity;
+            let fillSat = Math.max(0, currentSat - 10);
+            let textSat = 70 * colorIntensity;
+            let dotSat = 40 * colorIntensity;
+
+            const res = { 
+                hue, 
+                saturation: 35, 
+                lightness: 75,
+                paleStroke: `hsl(${hue}, ${currentSat}%, 75%)`,
+                paleFill: `hsl(${hue}, ${fillSat}%, 20%)`,
+                textFill: `hsl(${hue}, ${textSat}%, 88%)`,
+                dotFill: `hsl(${hue}, ${dotSat}%, 82%)`
+            };
             paleColorCache.set(id, res);
             return res;
+        }
+
+        // Pattern generator for hyper-fast grid drawing
+        const gridPatternCanvas = document.createElement('canvas');
+        const gridPatternCtx = gridPatternCanvas.getContext('2d');
+        let cachedPattern = null;
+        let cachedStepX = -1, cachedStepY = -1, cachedDotSize = -1, cachedColor = '';
+
+        function getGridPattern(stepX, stepY, dotSize, color) {
+            let roundedStepX = Math.max(1, Math.min(256, Math.round(stepX)));
+            let roundedStepY = Math.max(1, Math.min(256, Math.round(stepY)));
+            if (roundedStepX === cachedStepX && roundedStepY === cachedStepY && dotSize === cachedDotSize && color === cachedColor && cachedPattern) {
+                return cachedPattern;
+            }
+            gridPatternCanvas.width = roundedStepX;
+            gridPatternCanvas.height = roundedStepY;
+            gridPatternCtx.clearRect(0, 0, roundedStepX, roundedStepY);
+            gridPatternCtx.fillStyle = color;
+            gridPatternCtx.fillRect(0, 0, dotSize, dotSize);
+            cachedPattern = ctx.createPattern(gridPatternCanvas, 'repeat');
+            cachedStepX = roundedStepX;
+            cachedStepY = roundedStepY;
+            cachedDotSize = dotSize;
+            cachedColor = color;
+            return cachedPattern;
         }
 
         function ensureRectStructure(node) {
@@ -321,6 +362,7 @@
             canvas.style.width = viewW + 'px';
             canvas.style.height = viewH + 'px';
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            currentCanvasFont = "";
             needsRedraw = true; 
         }
         window.addEventListener('resize', resize);
@@ -359,6 +401,7 @@
         }
 
         function draw() {
+            ctx.globalAlpha = 1.0;
             ctx.fillStyle = '#0b0c10';
             ctx.fillRect(0, 0, viewW, viewH);
 
@@ -442,7 +485,7 @@
             return { bestFontSize, bestLines };
         }
 
-        function drawWrappedText(text, screenX, screenY, screenW, screenH, alpha, hue = 200) {
+        function drawWrappedText(text, screenX, screenY, screenW, screenH, alpha, pale) {
             if (!text || !text.trim()) return;
 
             let minDim = Math.min(screenW, screenH);
@@ -457,8 +500,7 @@
             if (layout === undefined) {
                 layout = computeTextLayout(text, screenW, screenH);
                 if (textLayoutCache.size > 2000) {
-                    const oldestKey = textLayoutCache.keys().next().value;
-                    textLayoutCache.delete(oldestKey);
+                    textLayoutCache.clear(); // Allocation-free cache flush
                 }
                 textLayoutCache.set(cacheKey, layout);
             }
@@ -469,17 +511,23 @@
             let lineHeight = bestFontSize * 1.2;
             let totalHeight = bestLines.length * lineHeight;
 
-            let textSat = 70 * colorIntensity;
-            ctx.fillStyle = `hsla(${hue}, ${textSat}%, 88%, ${alpha})`;
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = pale.textFill;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.font = `300 ${bestFontSize}px sans-serif`;
+
+            let newFont = `300 ${bestFontSize}px sans-serif`;
+            if (currentCanvasFont !== newFont) {
+                ctx.font = newFont;
+                currentCanvasFont = newFont;
+            }
 
             let startY = screenY - (totalHeight / 2) + (lineHeight / 2);
 
             for (let j = 0; j < bestLines.length; j++) {
                 ctx.fillText(bestLines[j], screenX, startY + (j * lineHeight));
             }
+            ctx.globalAlpha = 1.0;
         }
 
         function drawBubble(b, alphaMultiplier, parentHue, siblingIndex) {
@@ -502,19 +550,19 @@
                                    screenY - screenH / 2 <= 0 && screenY + screenH / 2 >= viewH);
 
             let pale = getPaleColor(b.id, parentHue, siblingIndex);
-            let currentSat = pale.saturation * colorIntensity;
-            let paleStroke = `hsla(${pale.hue}, ${currentSat}%, ${pale.lightness}%, ${alphaMultiplier * 0.85})`;
-            let paleFill = `hsla(${pale.hue}, ${Math.max(0, currentSat - 10)}%, ${pale.lightness - 55}%, ${alphaMultiplier * 0.8})`;
 
 			if (isFullyCovering) {
-				ctx.fillStyle = `rgba(10, 10, 12, ${alphaMultiplier * 0.85})`;
+                ctx.globalAlpha = alphaMultiplier * 0.85;
+				ctx.fillStyle = '#0a0a0c';
 				ctx.fillRect(0, 0, viewW, viewH);
 			} else if (minDim < GRADIENT_LOD_SCREEN_SIZE) {
 				ctx.beginPath();
 				ctx.rect(screenX - screenW / 2, screenY - screenH / 2, screenW, screenH);
-				ctx.fillStyle = paleFill;
+                ctx.globalAlpha = alphaMultiplier * 0.8;
+				ctx.fillStyle = pale.paleFill;
 				ctx.fill();
-				ctx.strokeStyle = paleStroke;
+                ctx.globalAlpha = alphaMultiplier * 0.85;
+				ctx.strokeStyle = pale.paleStroke;
 				ctx.lineWidth = borderLineWidth;
 				
                 if (childCount === 0) ctx.setLineDash([4, 4]); 
@@ -524,9 +572,11 @@
 			} else {
 				ctx.beginPath();
 				ctx.rect(screenX - screenW / 2, screenY - screenH / 2, screenW, screenH);
-				ctx.fillStyle = paleFill;
+                ctx.globalAlpha = alphaMultiplier * 0.8;
+				ctx.fillStyle = pale.paleFill;
 				ctx.fill();
-				ctx.strokeStyle = paleStroke;
+                ctx.globalAlpha = alphaMultiplier * 0.85;
+				ctx.strokeStyle = pale.paleStroke;
 				ctx.lineWidth = borderLineWidth;
 				
                 if (childCount === 0) {
@@ -536,11 +586,13 @@
 				ctx.stroke();
                 if (childCount === 0) ctx.setLineDash([]); 
             }
+            ctx.globalAlpha = 1.0;
 
             let stepScreenX = screenW / GRID_DIVISIONS;
             let stepScreenY = screenH / GRID_DIVISIONS;
             let minStepScreen = Math.min(stepScreenX, stepScreenY);
 
+            // Optimized Viewport-Clipped Grid Drawing
             if (minStepScreen >= 3 && alphaMultiplier > 0.05) {
                 let gridAlpha = 0.22 * alphaMultiplier;
                 if (minStepScreen < 8) {
@@ -548,25 +600,46 @@
                 }
 
                 if (gridAlpha > 0.005) {
+                    let dotSize = Math.max(0.8, Math.min(1.8, minStepScreen * 0.08));
                     let startX = screenX - screenW / 2;
                     let startY = screenY - screenH / 2;
 
-                    let minI = Math.max(0, Math.floor((0 - startX) / stepScreenX));
-                    let maxI = Math.min(GRID_DIVISIONS, Math.ceil((viewW - startX) / stepScreenX));
-                    let minJ = Math.max(0, Math.floor((0 - startY) / stepScreenY));
-                    let maxJ = Math.min(GRID_DIVISIONS, Math.ceil((viewH - startY) / stepScreenY));
+                    let visLeft = Math.max(0, startX);
+                    let visTop = Math.max(0, startY);
+                    let visRight = Math.min(viewW, startX + screenW);
+                    let visBottom = Math.min(viewH, startY + screenH);
 
-                    if (minI <= maxI && minJ <= maxJ) {
-                        ctx.fillStyle = `hsla(${pale.hue}, ${40 * colorIntensity}%, 82%, ${gridAlpha.toFixed(3)})`;
-                        let dotSize = Math.max(0.8, Math.min(1.8, minStepScreen * 0.08));
+                    let visW = visRight - visLeft;
+                    let visH = visBottom - visTop;
 
-                        for (let i = minI; i <= maxI; i++) {
-                            let px = startX + i * stepScreenX;
-                            for (let j = minJ; j <= maxJ; j++) {
-                                let py = startY + j * stepScreenY;
-                                ctx.fillRect(px - dotSize / 2, py - dotSize / 2, dotSize, dotSize);
+                    if (visW > 0 && visH > 0) {
+                        ctx.save();
+                        ctx.globalAlpha = gridAlpha;
+
+                        if (stepScreenX > 128 || stepScreenY > 128) {
+                            ctx.fillStyle = pale.dotFill;
+                            let startCol = Math.max(0, Math.floor((visLeft - startX) / stepScreenX));
+                            let endCol = Math.min(GRID_DIVISIONS, Math.ceil((visRight - startX) / stepScreenX));
+                            let startRow = Math.max(0, Math.floor((visTop - startY) / stepScreenY));
+                            let endRow = Math.min(GRID_DIVISIONS, Math.ceil((visBottom - startY) / stepScreenY));
+
+                            for (let c = startCol; c <= endCol; c++) {
+                                let dotX = startX + c * stepScreenX;
+                                if (dotX < visLeft || dotX > visRight) continue;
+                                for (let r = startRow; r <= endRow; r++) {
+                                    let dotY = startY + r * stepScreenY;
+                                    if (dotY >= visTop && dotY <= visBottom) {
+                                        ctx.fillRect(dotX, dotY, dotSize, dotSize);
+                                    }
+                                }
                             }
+                        } else {
+                            ctx.fillStyle = getGridPattern(stepScreenX, stepScreenY, dotSize, pale.dotFill);
+                            ctx.translate(startX, startY);
+                            ctx.fillRect(visLeft - startX, visTop - startY, visW, visH);
                         }
+                        ctx.restore();
+                        ctx.globalAlpha = 1.0;
                     }
                 }
             }
@@ -580,7 +653,7 @@
             let finalTextAlpha = alphaMultiplier * textFade;
 
             if (finalTextAlpha > 0.01) {
-                drawWrappedText(b.text, screenX, screenY, screenW, screenH, finalTextAlpha, pale.hue);
+                drawWrappedText(b.text, screenX, screenY, screenW, screenH, finalTextAlpha, pale);
             }
 
             let childrenFade = Math.max(0, Math.min(1, (avgDim - 200) / 300));
@@ -838,8 +911,6 @@
             registerSubtreeTags(rootBubble);
         }
 
-        // Deep-clone a node (fresh ids), used to give a rectangle its own
-        // fully independent copy of children when it leaves a tag group.
         function deepCloneNode(node) {
             const clone = {
                 id: crypto.randomUUID(),
@@ -858,8 +929,6 @@
             tagUnregister(node, tag);
         }
 
-        // Build a geometry-relative template of a node's children (relative
-        // to `parent`'s box), recursively.
         function templateFromNode(parent, node) {
             const safeW = parent.w || 1;
             const safeH = parent.h || 1;
@@ -877,7 +946,6 @@
             return groupNode.children.map(c => templateFromNode(groupNode, c));
         }
 
-        // Instantiate a template node into a real node sized/placed inside `parentGeom`'s box, snapped to grid.
         function instantiateFromTemplate(tpl, parentGeom) {
             let rawW = tpl.relW * parentGeom.w;
             let rawH = tpl.relH * parentGeom.h;
@@ -894,7 +962,7 @@
 
             const node = { id: crypto.randomUUID(), text: tpl.text, x: snapped.x, y: snapped.y, w, h, children: [] };
             node.children = tpl.children.map(c => instantiateFromTemplate(c, node));
-            tagRegister(node); // if tpl.text itself has a #tag (nested group), join it
+            tagRegister(node); 
             return node;
         }
 
@@ -902,7 +970,6 @@
             return tplArray.map(t => instantiateFromTemplate(t, parentGeom));
         }
 
-        // Resync every OTHER member of groupNode's tag to match groupNode's current children.
         function syncTagGroup(groupNode) {
             const tag = getTag(groupNode.text);
             if (!tag) return;
@@ -918,7 +985,6 @@
             markChanged();
         }
 
-        // Returns [rootBubble, ..., node] for the given id, or null if not found.
         function findAncestorChain(root, id, chain) {
             chain.push(root);
             if (root.id === id) return chain.slice();
@@ -930,7 +996,6 @@
             return null;
         }
 
-        // Find all tagged parents up the chain and sync their groups
         function syncAllAncestorTagGroups(nodeId) {
             if (!nodeId) return;
             const chain = findAncestorChain(rootBubble, nodeId, []);
@@ -942,7 +1007,6 @@
             }
         }
 
-        // Nearest tagged ancestor of id, INCLUDING the node itself.
         function findGroupRootInclusive(id) {
             const chain = findAncestorChain(rootBubble, id, []);
             if (!chain) return null;
@@ -952,7 +1016,6 @@
             return null;
         }
 
-        // Nearest tagged ancestor of id, EXCLUDING the node itself.
         function findGroupRootAbove(id) {
             const chain = findAncestorChain(rootBubble, id, []);
             if (!chain) return null;
@@ -962,19 +1025,16 @@
             return null;
         }
 
-        // Call after a node's own children array changed (add/remove a rectangle).
         function propagateStructuralChangeInclusive(node) {
             const groupRoot = findGroupRootInclusive(node.id);
             if (groupRoot) syncTagGroup(groupRoot);
         }
 
-        // Call after a node's own text changed (its content is part of any outer shared group).
         function propagateStructuralChangeAbove(node) {
             const groupRoot = findGroupRootAbove(node.id);
             if (groupRoot) syncTagGroup(groupRoot);
         }
 
-        // Decide what should happen to a tag when a node's text changes from oldText to newText.
         function decideTagChange(currentOwner, oldText, newText) {
             const oldTag = getTag(oldText);
             const newTag = getTag(newText);
@@ -1133,9 +1193,11 @@
             for(let b of allBubbles) {
                 let screenX = (b.x - camera.x) * camera.zoom + viewW / 2;
                 let screenY = (b.y - camera.y) * camera.zoom + viewH / 2;
-                let screenDistToCenter = Math.hypot(e.clientX - screenX, e.clientY - screenY);
+                let dx = e.clientX - screenX;
+                let dy = e.clientY - screenY;
                 
-                if (e.button === 0 && screenDistToCenter <= GIZMO_RADIUS) {
+                // Optimized Fast Squared Distance Gizmo Check
+                if (e.button === 0 && (dx * dx + dy * dy) <= GIZMO_RADIUS_SQ) {
                     activeBubble = b;
                     activeParent = findParent(rootBubble, b.id);
                     interactionMode = 'move';
@@ -1455,8 +1517,11 @@
                 let screenX = (deepTarget.x - camera.x) * camera.zoom + viewW / 2;
                 let screenY = (deepTarget.y - camera.y) * camera.zoom + viewH / 2;
                 let minDim = Math.min(deepTarget.w, deepTarget.h) * camera.zoom;
-                let screenDistToCenter = Math.hypot(clientX - screenX, clientY - screenY);
-                if (screenDistToCenter <= GIZMO_RADIUS && minDim > 25) overGizmo = true;
+                let dx = clientX - screenX;
+                let dy = clientY - screenY;
+                
+                // Optimized Fast Squared Distance Gizmo Check
+                if ((dx * dx + dy * dy) <= GIZMO_RADIUS_SQ && minDim > 25) overGizmo = true;
             }
 
             let borderTarget = findBorderTarget(rootBubble, clientX, clientY);
@@ -1506,8 +1571,11 @@
             if (target) {
                 let screenX = (target.x - camera.x) * camera.zoom + viewW / 2;
                 let screenY = (target.y - camera.y) * camera.zoom + viewH / 2;
+                let dx = e.clientX - screenX;
+                let dy = e.clientY - screenY;
                 
-                if (Math.hypot(e.clientX - screenX, e.clientY - screenY) <= GIZMO_RADIUS) return; 
+                // Optimized Fast Squared Distance Gizmo Check
+                if ((dx * dx + dy * dy) <= GIZMO_RADIUS_SQ) return; 
 
                 let text = prompt("Enter text for the nested rectangle (start with #tag to link shared children):", pendingBubbleText);
                 if (text === null) {
@@ -1850,6 +1918,7 @@
                             colorIntensity = payload.colorIntensity;
                             intensitySlider.value = Math.round(colorIntensity * 100);
                         }
+                        paleColorCache.clear();
                         markChanged();
                     } else {
                         alert("Malformed template dataset structure.");
@@ -1933,6 +2002,7 @@
                             colorIntensity = payload.colorIntensity;
                             intensitySlider.value = Math.round(colorIntensity * 100);
                         }
+                        paleColorCache.clear();
                         needsRedraw = true;
                         hasUnsavedChanges = false; 
                     }

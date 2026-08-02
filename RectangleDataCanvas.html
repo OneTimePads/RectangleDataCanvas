@@ -180,6 +180,7 @@
         <b>Drag Border/Corner</b>: Resize Rectangle (Hold Shift: move border only, do not resize children)<br>
         <b>Double-Click</b>: Add Nested Rectangle<br>
         <b>Right-Click</b>: Edit Text. Clear it to delete<br>
+        <b>#tag</b>: Start text with #word to link a rectangle's children to every other rectangle sharing that tag (same shared, always-in-sync children; each rectangle keeps its own text/position)<br>
         <b>Password Field</b>: Used automatically for exporting/saving if filled
     </div>
 
@@ -790,6 +791,211 @@
             return null;
         }
 
+        // ================================================================
+        // #tag SHARED-CHILDREN SYSTEM
+        // ================================================================
+
+        const TAG_RE = /^#([^\s#]+)/;
+        function getTag(text) {
+            if (!text) return null;
+            const m = TAG_RE.exec(text.trim());
+            return m ? m[1] : null;
+        }
+
+        // tag (string) -> Set of live node objects currently carrying that tag
+        const tagGroups = new Map();
+
+        function tagRegister(node) {
+            const tag = getTag(node.text);
+            if (!tag) return;
+            let set = tagGroups.get(tag);
+            if (!set) { set = new Set(); tagGroups.set(tag, set); }
+            set.add(node);
+        }
+
+        function tagUnregister(node, tagOverride) {
+            const tag = tagOverride !== undefined ? tagOverride : getTag(node.text);
+            if (!tag) return;
+            const set = tagGroups.get(tag);
+            if (set) {
+                set.delete(node);
+                if (set.size === 0) tagGroups.delete(tag);
+            }
+        }
+
+        function registerSubtreeTags(node) {
+            tagRegister(node);
+            node.children.forEach(registerSubtreeTags);
+        }
+
+        function unregisterSubtreeTags(node) {
+            tagUnregister(node);
+            node.children.forEach(unregisterSubtreeTags);
+        }
+
+        function rebuildTagGroups() {
+            tagGroups.clear();
+            registerSubtreeTags(rootBubble);
+        }
+
+        // Deep-clone a node (fresh ids), used to give a rectangle its own
+        // fully independent copy of children when it leaves a tag group.
+        function deepCloneNode(node) {
+            const clone = {
+                id: crypto.randomUUID(),
+                text: node.text,
+                x: node.x, y: node.y, w: node.w, h: node.h,
+                children: node.children.map(deepCloneNode)
+            };
+            tagRegister(clone);
+            return clone;
+        }
+
+        function detachFromTagGroup(node, tag) {
+            if (!tag) return;
+            node.children.forEach(unregisterSubtreeTags);
+            node.children = node.children.map(deepCloneNode);
+            tagUnregister(node, tag);
+        }
+
+        // Build a geometry-relative template of a node's children (relative
+        // to `parent`'s box), recursively.
+        function templateFromNode(parent, node) {
+            const safeW = parent.w || 1;
+            const safeH = parent.h || 1;
+            return {
+                text: node.text,
+                relX: (node.x - parent.x) / safeW,
+                relY: (node.y - parent.y) / safeH,
+                relW: node.w / safeW,
+                relH: node.h / safeH,
+                children: node.children.map(c => templateFromNode(node, c))
+            };
+        }
+
+        function templateFromChildren(groupNode) {
+            return groupNode.children.map(c => templateFromNode(groupNode, c));
+        }
+
+        // Instantiate a template node into a real node sized/placed inside `parentGeom`'s box, snapped to grid.
+        function instantiateFromTemplate(tpl, parentGeom) {
+            let rawW = tpl.relW * parentGeom.w;
+            let rawH = tpl.relH * parentGeom.h;
+            let stepX = parentGeom.w / GRID_DIVISIONS;
+            let stepY = parentGeom.h / GRID_DIVISIONS;
+
+            let w = Math.max(stepX, Math.round(rawW / stepX) * stepX);
+            let h = Math.max(stepY, Math.round(rawH / stepY) * stepY);
+
+            let rawX = parentGeom.x + tpl.relX * parentGeom.w;
+            let rawY = parentGeom.y + tpl.relY * parentGeom.h;
+
+            let snapped = snapChildPositionToParent(rawX, rawY, w, h, parentGeom, tempSnappedCoords);
+
+            const node = { id: crypto.randomUUID(), text: tpl.text, x: snapped.x, y: snapped.y, w, h, children: [] };
+            node.children = tpl.children.map(c => instantiateFromTemplate(c, node));
+            tagRegister(node); // if tpl.text itself has a #tag (nested group), join it
+            return node;
+        }
+
+        function instantiateChildren(tplArray, parentGeom) {
+            return tplArray.map(t => instantiateFromTemplate(t, parentGeom));
+        }
+
+        // Resync every OTHER member of groupNode's tag to match groupNode's current children.
+        function syncTagGroup(groupNode) {
+            const tag = getTag(groupNode.text);
+            if (!tag) return;
+            const set = tagGroups.get(tag);
+            if (!set || set.size < 2) return;
+
+            const template = templateFromChildren(groupNode);
+            for (const other of set) {
+                if (other === groupNode) continue;
+                other.children.forEach(unregisterSubtreeTags);
+                other.children = instantiateChildren(template, other);
+            }
+            markChanged();
+        }
+
+        // Returns [rootBubble, ..., node] for the given id, or null if not found.
+        function findAncestorChain(root, id, chain) {
+            chain.push(root);
+            if (root.id === id) return chain.slice();
+            for (const child of root.children) {
+                const res = findAncestorChain(child, id, chain);
+                if (res) return res;
+            }
+            chain.pop();
+            return null;
+        }
+
+        // Find all tagged parents up the chain and sync their groups
+        function syncAllAncestorTagGroups(nodeId) {
+            if (!nodeId) return;
+            const chain = findAncestorChain(rootBubble, nodeId, []);
+            if (!chain) return;
+            for (let i = chain.length - 1; i >= 0; i--) {
+                if (getTag(chain[i].text)) {
+                    syncTagGroup(chain[i]);
+                }
+            }
+        }
+
+        // Nearest tagged ancestor of id, INCLUDING the node itself.
+        function findGroupRootInclusive(id) {
+            const chain = findAncestorChain(rootBubble, id, []);
+            if (!chain) return null;
+            for (let i = chain.length - 1; i >= 0; i--) {
+                if (getTag(chain[i].text)) return chain[i];
+            }
+            return null;
+        }
+
+        // Nearest tagged ancestor of id, EXCLUDING the node itself.
+        function findGroupRootAbove(id) {
+            const chain = findAncestorChain(rootBubble, id, []);
+            if (!chain) return null;
+            for (let i = chain.length - 2; i >= 0; i--) {
+                if (getTag(chain[i].text)) return chain[i];
+            }
+            return null;
+        }
+
+        // Call after a node's own children array changed (add/remove a rectangle).
+        function propagateStructuralChangeInclusive(node) {
+            const groupRoot = findGroupRootInclusive(node.id);
+            if (groupRoot) syncTagGroup(groupRoot);
+        }
+
+        // Call after a node's own text changed (its content is part of any outer shared group).
+        function propagateStructuralChangeAbove(node) {
+            const groupRoot = findGroupRootAbove(node.id);
+            if (groupRoot) syncTagGroup(groupRoot);
+        }
+
+        // Decide what should happen to a tag when a node's text changes from oldText to newText.
+        function decideTagChange(currentOwner, oldText, newText) {
+            const oldTag = getTag(oldText);
+            const newTag = getTag(newText);
+            if (oldTag === newTag) return { allowed: true, oldTag, newTag, replace: false };
+
+            if (newTag) {
+                const existingSet = tagGroups.get(newTag);
+                const others = existingSet ? [...existingSet].filter(n => n !== currentOwner) : [];
+                if (others.length > 0) {
+                    const proceed = confirm(
+                        `A rectangle tagged #${newTag} already exists and has shared children.\n\n` +
+                        `Link to it and REPLACE the children here with the shared #${newTag} children?\n\n` +
+                        `OK = link (children here get replaced)\nCancel = keep as is (name change blocked)`
+                    );
+                    if (!proceed) return { allowed: false, oldTag, newTag, replace: false };
+                    return { allowed: true, oldTag, newTag, replace: true, sourceNode: others[0] };
+                }
+            }
+            return { allowed: true, oldTag, newTag, replace: false };
+        }
+
         function moveBubbleRecursively(b, dx, dy) {
             b.x += dx;
             b.y += dy;
@@ -877,6 +1083,9 @@
         let pendingBubbleText = "";
 
         function cancelInteraction() {
+            if (activeBubble) {
+                syncAllAncestorTagGroups(activeBubble.id);
+            }
             interactionMode = "none";
             activeBubble = null;
             activeParent = null;
@@ -1096,6 +1305,7 @@
                     let deltaX = targetX - activeBubble.x;
                     let deltaY = targetY - activeBubble.y;
                     moveBubbleRecursively(activeBubble, deltaX, deltaY);
+                    syncAllAncestorTagGroups(activeBubble.id);
                     markChanged();
                 } 
                 
@@ -1227,6 +1437,7 @@
                         scaleBubbleHierarchy(activeBubble, scaleX, scaleY, originX, originY);
                     }
 
+                    syncAllAncestorTagGroups(activeBubble.id);
                     markChanged();
                 }
                 return; 
@@ -1260,6 +1471,9 @@
         }
 
         window.addEventListener('mouseup', () => {
+            if (activeBubble) {
+                syncAllAncestorTagGroups(activeBubble.id);
+            }
             interactionMode = 'none';
             activeBubble = null;
             activeParent = null;
@@ -1295,13 +1509,21 @@
                 
                 if (Math.hypot(e.clientX - screenX, e.clientY - screenY) <= GIZMO_RADIUS) return; 
 
-                let text = prompt("Enter text for the nested rectangle:", pendingBubbleText);
+                let text = prompt("Enter text for the nested rectangle (start with #tag to link shared children):", pendingBubbleText);
                 if (text === null) {
                     pendingBubbleText = ""; 
                     return;
                 }
 
-                if (text.trim() !== "") {
+                text = text.trim();
+
+                if (text !== "") {
+
+                    const tagDecision = decideTagChange(null, "", text);
+                    if (!tagDecision.allowed) {
+                        pendingBubbleText = text;
+                        return;
+                    }
 
                     let desiredScreenW = DEFAULT_RECT_SCREEN_W;
                     let desiredScreenH = DEFAULT_RECT_SCREEN_H;
@@ -1376,15 +1598,24 @@
                     }
 
                     pendingBubbleText = "";
-                    target.children.push({
+                    let newNode = {
                         id: crypto.randomUUID(), 
-                        text: text.trim(),
+                        text: text,
                         x: spawnX,
                         y: spawnY,
                         w: newW,
                         h: newH,
                         children: []
-                    });
+                    };
+                    if (tagDecision.newTag) {
+                        tagRegister(newNode);
+                        if (tagDecision.replace) {
+                            const template = templateFromChildren(tagDecision.sourceNode);
+                            newNode.children = instantiateChildren(template, newNode);
+                        }
+                    }
+                    target.children.push(newNode);
+                    propagateStructuralChangeInclusive(target);
                     markChanged();
                 }
             }
@@ -1396,25 +1627,52 @@
             let target = findDeepestBubble(rootBubble, wCoords.x, wCoords.y);
             
             if (target) {
-                let newText = prompt("Edit rectangle text (clear it to delete this rectangle and everything inside it):", target.text);
+                let oldText = target.text;
+                let newText = prompt("Edit rectangle text (clear it to delete this rectangle and everything inside it). Start with #tag to link shared children:", target.text);
                 if (newText === null) return; 
+                newText = newText.trim();
 
-                if (newText.trim() === "") {
+                if (newText === "") {
                     let parent = findParent(rootBubble, target.id);
                     if (!parent) {
                         alert("The root rectangle can't be deleted this way.");
                         return;
                     }
+                    unregisterSubtreeTags(target);
                     parent.children = parent.children.filter(child => child.id !== target.id);
                     if (activeBubble && activeBubble.id === target.id) {
                         activeBubble = null;
                         interactionMode = 'none';
                     }
+                    propagateStructuralChangeInclusive(parent);
                     markChanged();
-                } else {
-                    target.text = newText.trim();
-                    markChanged();
+                    return;
                 }
+
+                if (newText === oldText) return;
+
+                const tagDecision = decideTagChange(target, oldText, newText);
+                if (!tagDecision.allowed) {
+                    return;
+                }
+
+                if (tagDecision.oldTag && tagDecision.oldTag !== tagDecision.newTag) {
+                    detachFromTagGroup(target, tagDecision.oldTag);
+                }
+
+                target.text = newText;
+
+                if (tagDecision.newTag) {
+                    tagRegister(target);
+                    if (tagDecision.replace) {
+                        const template = templateFromChildren(tagDecision.sourceNode);
+                        target.children.forEach(unregisterSubtreeTags);
+                        target.children = instantiateChildren(template, target);
+                    }
+                }
+
+                propagateStructuralChangeAbove(target);
+                markChanged();
             }
         });
 
@@ -1586,6 +1844,7 @@
                     if (payload.rootBubble && payload.rootBubble.children !== undefined) {
                         rootBubble = payload.rootBubble;
                         ensureRectStructure(rootBubble);
+                        rebuildTagGroups();
                         if (payload.camera) camera = payload.camera;
                         if (payload.colorIntensity !== undefined) {
                             colorIntensity = payload.colorIntensity;
@@ -1668,6 +1927,7 @@
                     if (payload.rootBubble && payload.rootBubble.children !== undefined) {
                         rootBubble = payload.rootBubble;
                         ensureRectStructure(rootBubble);
+                        rebuildTagGroups();
                         if (payload.camera) camera = payload.camera;
                         if (payload.colorIntensity !== undefined) {
                             colorIntensity = payload.colorIntensity;

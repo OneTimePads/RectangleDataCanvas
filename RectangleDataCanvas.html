@@ -411,7 +411,7 @@
 
         const textLayoutCache = new Map();
 
-       function computeTextLayout(text, worldW, worldH) {
+        function computeTextLayout(text, worldW, worldH) {
             if (worldW <= 0 || worldH <= 0) return null;
 
             const MAX_DIM = 1000;
@@ -471,7 +471,7 @@
             };
         }
 
-       function drawWrappedText(text, screenX, screenY, worldW, worldH, zoom, alpha, pale) {
+        function drawWrappedText(text, screenX, screenY, worldW, worldH, zoom, alpha, pale) {
             if (!text || !text.trim()) return;
 
             let screenW = worldW * zoom;
@@ -479,7 +479,7 @@
             let minDim = Math.min(screenW, screenH);
             if (minDim < 10) return; 
 
-            let cacheKey = `${text}_${worldW.toFixed(3)}_${worldH.toFixed(3)}`;
+            let cacheKey = `${text}_${worldW.toPrecision(6)}_${worldH.toPrecision(6)}`;
             let layout = textLayoutCache.get(cacheKey);
 
             if (layout === undefined) {

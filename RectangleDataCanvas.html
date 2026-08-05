@@ -443,15 +443,25 @@
 
         const textLayoutCache = new Map();
 
-        function computeTextLayout(text, screenW, screenH) {
-            let paddedW = screenW * 0.85;
-            let paddedH = screenH * 0.85;
-            if (paddedW <= 0 || paddedH <= 0) return null;
+       function computeTextLayout(text, worldW, worldH) {
+            if (worldW <= 0 || worldH <= 0) return null;
+
+            // Use a standardized base scale (e.g. max side is 1000) for stable canvas text measurement
+            const MAX_DIM = 1000;
+            let maxWorldDim = Math.max(worldW, worldH);
+            let scaleToNorm = MAX_DIM / maxWorldDim;
+            
+            let normW = worldW * scaleToNorm;
+            let normH = worldH * scaleToNorm;
+
+            let paddedW = normW * 0.85;
+            let paddedH = normH * 0.85;
 
             let words = text.trim().split(/\s+/);
             if (words.length === 0) return null;
 
-            let maxPossibleSize = Math.min(paddedH, Math.max(12, screenH * 0.4));
+            // Limit font size proportionally (e.g., max 40% of the box height)
+            let maxPossibleSize = Math.min(paddedH, normH * 0.4);
             let low = 1;
             let high = Math.floor(maxPossibleSize);
             let bestFontSize = 0;
@@ -487,25 +497,29 @@
                 }
             }
 
-            if (bestFontSize < 2 || bestLines.length === 0) return null;
+            if (bestFontSize < 1 || bestLines.length === 0) return null;
 
-            return { bestFontSize, bestLines };
+            // Convert the normalized font size back to world scale
+            return { 
+                worldFontSize: bestFontSize / scaleToNorm, 
+                bestLines 
+            };
         }
 
-        function drawWrappedText(text, screenX, screenY, screenW, screenH, alpha, pale) {
+       function drawWrappedText(text, screenX, screenY, worldW, worldH, zoom, alpha, pale) {
             if (!text || !text.trim()) return;
 
+            let screenW = worldW * zoom;
+            let screenH = worldH * zoom;
             let minDim = Math.min(screenW, screenH);
             if (minDim < 10) return; 
 
-            const LAYOUT_BUCKET = 4;
-            let bucketedW = Math.round(screenW / LAYOUT_BUCKET) * LAYOUT_BUCKET;
-            let bucketedH = Math.round(screenH / LAYOUT_BUCKET) * LAYOUT_BUCKET;
-            let cacheKey = `${text}_${bucketedW}_${bucketedH}`;
+            // Cache using world dimensions to ensure stability regardless of zoom
+            let cacheKey = `${text}_${worldW.toFixed(3)}_${worldH.toFixed(3)}`;
             let layout = textLayoutCache.get(cacheKey);
 
             if (layout === undefined) {
-                layout = computeTextLayout(text, screenW, screenH);
+                layout = computeTextLayout(text, worldW, worldH);
                 if (textLayoutCache.size > 2000) {
                     textLayoutCache.clear(); // Allocation-free cache flush
                 }
@@ -514,8 +528,11 @@
 
             if (!layout) return;
 
-            let { bestFontSize, bestLines } = layout;
-            let lineHeight = bestFontSize * 1.2;
+            let { worldFontSize, bestLines } = layout;
+            
+            // Convert world font size to screen font size
+            let screenFontSize = worldFontSize * zoom;
+            let lineHeight = screenFontSize * 1.2;
             let totalHeight = bestLines.length * lineHeight;
 
             ctx.globalAlpha = alpha;
@@ -523,7 +540,7 @@
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
 
-            let newFont = `300 ${bestFontSize}px sans-serif`;
+            let newFont = `300 ${screenFontSize}px sans-serif`;
             if (currentCanvasFont !== newFont) {
                 ctx.font = newFont;
                 currentCanvasFont = newFont;
@@ -655,12 +672,13 @@
                 drawGizmo(screenX, screenY, alphaMultiplier, pale.hue);
             }
             
-            let avgDim = (screenW + screenH) / 2;
+			let avgDim = (screenW + screenH) / 2;
             let textFade = Math.max(0, Math.min(1, 1 - (avgDim - 500) / 500));
             let finalTextAlpha = alphaMultiplier * textFade;
 
             if (finalTextAlpha > 0.01) {
-                drawWrappedText(b.text, screenX, screenY, screenW, screenH, finalTextAlpha, pale);
+                // UPDATE: Pass world bounds (b.w, b.h) and camera.zoom
+                drawWrappedText(b.text, screenX, screenY, b.w, b.h, camera.zoom, finalTextAlpha, pale);
             }
 
             let childrenFade = Math.max(0, Math.min(1, (avgDim - 200) / 300));

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rectangle Data Canvas</title>
-	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='8' y='8' width='48' height='48' fill='none' stroke='cyan' stroke-width='6' rx='4'/%3E%3C/svg%3E">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='8' y='8' width='48' height='48' fill='none' stroke='cyan' stroke-width='6' rx='4'/%3E%3C/svg%3E">
     <style>
         body {
             margin: 0;
@@ -127,30 +127,30 @@
             accent-color: #a2d2ff;
             flex-grow: 1;
         }
-		#instructions {
-			position: fixed;
-			bottom: 20px;
-			right: 20px;
-			z-index: 1;
-			background: transparent;
-			font-size: 13px;
-			color: rgba(215, 225, 235, 0.45);
-			text-align: right;
-			pointer-events: none;
-			user-select: none;
-			line-height: 1.6;
+        #instructions {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1;
+            background: transparent;
+            font-size: 13px;
+            color: rgba(215, 225, 235, 0.45);
+            text-align: right;
+            pointer-events: none;
+            user-select: none;
+            line-height: 1.6;
             font-weight: 300;
-		}
+        }
 
-		#instructions b {
-			color: rgba(189, 224, 254, 0.7);
+        #instructions b {
+            color: rgba(189, 224, 254, 0.7);
             font-weight: 300;
-		}
+        }
     </style>
 </head>
 <body>
 
-	<div id="ui">
+    <div id="ui">
         <div class="buttonRow">
             <button id="exportBtn">Export Data</button>
             <button id="importBtn">Import Data</button>
@@ -271,26 +271,33 @@
         // Pattern generator for hyper-fast grid drawing
         const gridPatternCanvas = document.createElement('canvas');
         const gridPatternCtx = gridPatternCanvas.getContext('2d');
-        let cachedPattern = null;
-        let cachedStepX = -1, cachedStepY = -1, cachedDotSize = -1, cachedColor = '';
+        const gridPatternCache = new Map();
+        const MAX_GRID_CACHE_SIZE = 100;
 
         function getGridPattern(stepX, stepY, dotSize, color) {
             let roundedStepX = Math.max(1, Math.min(256, Math.round(stepX)));
             let roundedStepY = Math.max(1, Math.min(256, Math.round(stepY)));
-            if (roundedStepX === cachedStepX && roundedStepY === cachedStepY && dotSize === cachedDotSize && color === cachedColor && cachedPattern) {
-                return cachedPattern;
+            let cacheKey = `${roundedStepX}_${roundedStepY}_${dotSize}_${color}`;
+
+            if (gridPatternCache.has(cacheKey)) {
+                return gridPatternCache.get(cacheKey);
             }
+
             gridPatternCanvas.width = roundedStepX;
             gridPatternCanvas.height = roundedStepY;
             gridPatternCtx.clearRect(0, 0, roundedStepX, roundedStepY);
             gridPatternCtx.fillStyle = color;
             gridPatternCtx.fillRect(0, 0, dotSize, dotSize);
-            cachedPattern = ctx.createPattern(gridPatternCanvas, 'repeat');
-            cachedStepX = roundedStepX;
-            cachedStepY = roundedStepY;
-            cachedDotSize = dotSize;
-            cachedColor = color;
-            return cachedPattern;
+
+            let pattern = ctx.createPattern(gridPatternCanvas, 'repeat');
+
+            if (gridPatternCache.size >= MAX_GRID_CACHE_SIZE) {
+                let oldestKey = gridPatternCache.keys().next().value;
+                gridPatternCache.delete(oldestKey);
+            }
+
+            gridPatternCache.set(cacheKey, pattern);
+            return pattern;
         }
 
         function ensureRectStructure(node) {
@@ -551,39 +558,39 @@
 
             let pale = getPaleColor(b.id, parentHue, siblingIndex);
 
-			if (isFullyCovering) {
+            if (isFullyCovering) {
                 ctx.globalAlpha = alphaMultiplier * 0.85;
-				ctx.fillStyle = '#0a0a0c';
-				ctx.fillRect(0, 0, viewW, viewH);
-			} else if (minDim < GRADIENT_LOD_SCREEN_SIZE) {
-				ctx.beginPath();
-				ctx.rect(screenX - screenW / 2, screenY - screenH / 2, screenW, screenH);
+                ctx.fillStyle = '#0a0a0c';
+                ctx.fillRect(0, 0, viewW, viewH);
+            } else if (minDim < GRADIENT_LOD_SCREEN_SIZE) {
+                ctx.beginPath();
+                ctx.rect(screenX - screenW / 2, screenY - screenH / 2, screenW, screenH);
                 ctx.globalAlpha = alphaMultiplier * 0.8;
-				ctx.fillStyle = pale.paleFill;
-				ctx.fill();
+                ctx.fillStyle = pale.paleFill;
+                ctx.fill();
                 ctx.globalAlpha = alphaMultiplier * 0.85;
-				ctx.strokeStyle = pale.paleStroke;
-				ctx.lineWidth = borderLineWidth;
-				
+                ctx.strokeStyle = pale.paleStroke;
+                ctx.lineWidth = borderLineWidth;
+                
                 if (childCount === 0) ctx.setLineDash([4, 4]); 
-				ctx.stroke();
+                ctx.stroke();
                 if (childCount === 0) ctx.setLineDash([]); 
                 
-			} else {
-				ctx.beginPath();
-				ctx.rect(screenX - screenW / 2, screenY - screenH / 2, screenW, screenH);
+            } else {
+                ctx.beginPath();
+                ctx.rect(screenX - screenW / 2, screenY - screenH / 2, screenW, screenH);
                 ctx.globalAlpha = alphaMultiplier * 0.8;
-				ctx.fillStyle = pale.paleFill;
-				ctx.fill();
+                ctx.fillStyle = pale.paleFill;
+                ctx.fill();
                 ctx.globalAlpha = alphaMultiplier * 0.85;
-				ctx.strokeStyle = pale.paleStroke;
-				ctx.lineWidth = borderLineWidth;
-				
+                ctx.strokeStyle = pale.paleStroke;
+                ctx.lineWidth = borderLineWidth;
+                
                 if (childCount === 0) {
                     let dashSize = Math.max(6, Math.min(minDim * 0.1, 20));
                     ctx.setLineDash([dashSize, dashSize]);
                 }
-				ctx.stroke();
+                ctx.stroke();
                 if (childCount === 0) ctx.setLineDash([]); 
             }
             ctx.globalAlpha = 1.0;
@@ -666,58 +673,58 @@
             }
         }
 
-	    function drawGizmo(sx, sy, alpha, hue = 200) {
-			ctx.save();
+        function drawGizmo(sx, sy, alpha, hue = 200) {
+            ctx.save();
 
             const gAlpha = alpha * 0.45;
             const gizmoSat = 40 * colorIntensity;
 
-			ctx.beginPath();
-			ctx.arc(sx, sy, GIZMO_RADIUS, 0, Math.PI * 2);
-			ctx.fillStyle = `rgba(25, 28, 36, ${gAlpha * 0.7})`;
-			ctx.fill();
-			ctx.strokeStyle = `hsla(${hue}, ${gizmoSat}%, 75%, ${gAlpha * 0.85})`;
-			ctx.lineWidth = 1.0;
-			ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(sx, sy, GIZMO_RADIUS, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(25, 28, 36, ${gAlpha * 0.7})`;
+            ctx.fill();
+            ctx.strokeStyle = `hsla(${hue}, ${gizmoSat}%, 75%, ${gAlpha * 0.85})`;
+            ctx.lineWidth = 1.0;
+            ctx.stroke();
 
             const inset = 2.5;
             const arrowOffset = 2;
 
-			ctx.beginPath();
-			ctx.moveTo(sx - GIZMO_RADIUS + inset, sy);
-			ctx.lineTo(sx + GIZMO_RADIUS - inset, sy);
-			ctx.moveTo(sx, sy - GIZMO_RADIUS + inset);
-			ctx.lineTo(sx, sy + GIZMO_RADIUS - inset);
-			ctx.strokeStyle = `hsla(${hue}, ${gizmoSat}%, 80%, ${gAlpha})`;
-			ctx.lineWidth = 1.0;
-			ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(sx - GIZMO_RADIUS + inset, sy);
+            ctx.lineTo(sx + GIZMO_RADIUS - inset, sy);
+            ctx.moveTo(sx, sy - GIZMO_RADIUS + inset);
+            ctx.lineTo(sx, sy + GIZMO_RADIUS - inset);
+            ctx.strokeStyle = `hsla(${hue}, ${gizmoSat}%, 80%, ${gAlpha})`;
+            ctx.lineWidth = 1.0;
+            ctx.stroke();
 
-			ctx.beginPath();
-			ctx.moveTo(sx - GIZMO_RADIUS + inset, sy);
-			ctx.lineTo(sx - GIZMO_RADIUS + inset + arrowOffset, sy - arrowOffset);
-			ctx.moveTo(sx - GIZMO_RADIUS + inset, sy);
-			ctx.lineTo(sx - GIZMO_RADIUS + inset + arrowOffset, sy + arrowOffset);
+            ctx.beginPath();
+            ctx.moveTo(sx - GIZMO_RADIUS + inset, sy);
+            ctx.lineTo(sx - GIZMO_RADIUS + inset + arrowOffset, sy - arrowOffset);
+            ctx.moveTo(sx - GIZMO_RADIUS + inset, sy);
+            ctx.lineTo(sx - GIZMO_RADIUS + inset + arrowOffset, sy + arrowOffset);
 
-			ctx.moveTo(sx + GIZMO_RADIUS - inset, sy);
-			ctx.lineTo(sx + GIZMO_RADIUS - inset - arrowOffset, sy - arrowOffset);
-			ctx.moveTo(sx + GIZMO_RADIUS - inset, sy);
-			ctx.lineTo(sx + GIZMO_RADIUS - inset - arrowOffset, sy + arrowOffset);
+            ctx.moveTo(sx + GIZMO_RADIUS - inset, sy);
+            ctx.lineTo(sx + GIZMO_RADIUS - inset - arrowOffset, sy - arrowOffset);
+            ctx.moveTo(sx + GIZMO_RADIUS - inset, sy);
+            ctx.lineTo(sx + GIZMO_RADIUS - inset - arrowOffset, sy + arrowOffset);
 
-			ctx.moveTo(sx, sy - GIZMO_RADIUS + inset);
-			ctx.lineTo(sx - arrowOffset, sy - GIZMO_RADIUS + inset + arrowOffset);
-			ctx.moveTo(sx, sy - GIZMO_RADIUS + inset);
-			ctx.lineTo(sx + arrowOffset, sy - GIZMO_RADIUS + inset + arrowOffset);
+            ctx.moveTo(sx, sy - GIZMO_RADIUS + inset);
+            ctx.lineTo(sx - arrowOffset, sy - GIZMO_RADIUS + inset + arrowOffset);
+            ctx.moveTo(sx, sy - GIZMO_RADIUS + inset);
+            ctx.lineTo(sx + arrowOffset, sy - GIZMO_RADIUS + inset + arrowOffset);
 
-			ctx.moveTo(sx, sy + GIZMO_RADIUS - inset);
-			ctx.lineTo(sx - arrowOffset, sy + GIZMO_RADIUS - inset - arrowOffset);
-			ctx.moveTo(sx, sy + GIZMO_RADIUS - inset);
-			ctx.lineTo(sx + arrowOffset, sy + GIZMO_RADIUS - inset - arrowOffset);
+            ctx.moveTo(sx, sy + GIZMO_RADIUS - inset);
+            ctx.lineTo(sx - arrowOffset, sy + GIZMO_RADIUS - inset - arrowOffset);
+            ctx.moveTo(sx, sy + GIZMO_RADIUS - inset);
+            ctx.lineTo(sx + arrowOffset, sy + GIZMO_RADIUS - inset - arrowOffset);
 
-			ctx.strokeStyle = `hsla(${hue}, ${gizmoSat}%, 80%, ${gAlpha})`;
-			ctx.lineWidth = 1.0;
-			ctx.stroke();
-			ctx.restore();
-		}
+            ctx.strokeStyle = `hsla(${hue}, ${gizmoSat}%, 80%, ${gAlpha})`;
+            ctx.lineWidth = 1.0;
+            ctx.stroke();
+            ctx.restore();
+        }
 
         function loop() {
             if (pointerMoveQueued) {
@@ -759,6 +766,7 @@
             return null;
         }
 
+        // Performance fix: add spatial pruning to avoid traversing subtrees far from the pointer
         function findBorderTarget(root, clientX, clientY) {
             let best = null;
             let bestDelta = Infinity;
@@ -776,62 +784,71 @@
                 if (screenX + screenW / 2 + cullMargin < 0 || screenX - screenW / 2 - cullMargin > viewW ||
                     screenY + screenH / 2 + cullMargin < 0 || screenY - screenH / 2 - cullMargin > viewH) return;
 
+                // --- Pruning: skip this node and its children if pointer is far outside its expanded bounds ---
+                let hitMargin = Math.max(6, Math.min(15, Math.min(screenW, screenH) * 0.15));
+                let expandedLeft = screenX - screenW / 2 - hitMargin;
+                let expandedRight = screenX + screenW / 2 + hitMargin;
+                let expandedTop = screenY - screenH / 2 - hitMargin;
+                let expandedBottom = screenY + screenH / 2 + hitMargin;
+
+                if (clientX < expandedLeft || clientX > expandedRight ||
+                    clientY < expandedTop || clientY > expandedBottom) {
+                    return; // pointer is too far, no need to check children
+                }
+
+                // Check border of current node
                 if (screenW >= 6 && screenH >= 6) {
                     let hw = screenW / 2;
                     let hh = screenH / 2;
-                    let hitMargin = Math.max(6, Math.min(15, Math.min(screenW, screenH) * 0.15));
 
-                    if (clientX >= screenX - hw - hitMargin && clientX <= screenX + hw + hitMargin &&
-                        clientY >= screenY - hh - hitMargin && clientY <= screenY + hh + hitMargin) {
+                    let leftEdge = screenX - hw;
+                    let rightEdge = screenX + hw;
+                    let topEdge = screenY - hh;
+                    let bottomEdge = screenY + hh;
 
-                        let leftEdge = screenX - hw;
-                        let rightEdge = screenX + hw;
-                        let topEdge = screenY - hh;
-                        let bottomEdge = screenY + hh;
+                    let distLeft = Math.abs(clientX - leftEdge);
+                    let distRight = Math.abs(clientX - rightEdge);
+                    let distTop = Math.abs(clientY - topEdge);
+                    let distBottom = Math.abs(clientY - bottomEdge);
 
-                        let distLeft = Math.abs(clientX - leftEdge);
-                        let distRight = Math.abs(clientX - rightEdge);
-                        let distTop = Math.abs(clientY - topEdge);
-                        let distBottom = Math.abs(clientY - bottomEdge);
+                    let inYRange = (clientY >= topEdge - hitMargin) && (clientY <= bottomEdge + hitMargin);
+                    let inXRange = (clientX >= leftEdge - hitMargin) && (clientX <= rightEdge + hitMargin);
 
-                        let inYRange = (clientY >= topEdge - hitMargin) && (clientY <= bottomEdge + hitMargin);
-                        let inXRange = (clientX >= leftEdge - hitMargin) && (clientX <= rightEdge + hitMargin);
+                    let nearLeft = distLeft <= hitMargin && inYRange;
+                    let nearRight = distRight <= hitMargin && inYRange;
+                    let nearTop = distTop <= hitMargin && inXRange;
+                    let nearBottom = distBottom <= hitMargin && inXRange;
 
-                        let nearLeft = distLeft <= hitMargin && inYRange;
-                        let nearRight = distRight <= hitMargin && inYRange;
-                        let nearTop = distTop <= hitMargin && inXRange;
-                        let nearBottom = distBottom <= hitMargin && inXRange;
+                    if (nearLeft || nearRight || nearTop || nearBottom) {
+                        let dirX = 0;
+                        if (nearLeft && nearRight) dirX = distLeft <= distRight ? -1 : 1;
+                        else if (nearLeft) dirX = -1;
+                        else if (nearRight) dirX = 1;
 
-                        if (nearLeft || nearRight || nearTop || nearBottom) {
-                            let dirX = 0;
-                            if (nearLeft && nearRight) dirX = distLeft <= distRight ? -1 : 1;
-                            else if (nearLeft) dirX = -1;
-                            else if (nearRight) dirX = 1;
+                        let dirY = 0;
+                        if (nearTop && nearBottom) dirY = distTop <= distBottom ? -1 : 1;
+                        else if (nearTop) dirY = -1;
+                        else if (nearBottom) dirY = 1;
 
-                            let dirY = 0;
-                            if (nearTop && nearBottom) dirY = distTop <= distBottom ? -1 : 1;
-                            else if (nearTop) dirY = -1;
-                            else if (nearBottom) dirY = 1;
+                        let delta = Math.min(
+                            nearLeft ? distLeft : Infinity,
+                            nearRight ? distRight : Infinity,
+                            nearTop ? distTop : Infinity,
+                            nearBottom ? distBottom : Infinity
+                        );
 
-                            let delta = Math.min(
-                                nearLeft ? distLeft : Infinity,
-                                nearRight ? distRight : Infinity,
-                                nearTop ? distTop : Infinity,
-                                nearBottom ? distBottom : Infinity
-                            );
-
-                            if (delta < bestDelta) {
-                                bestDelta = delta;
-                                best = {
-                                    bubble: b,
-                                    dirX: dirX,
-                                    dirY: dirY
-                                };
-                            }
+                        if (delta < bestDelta) {
+                            bestDelta = delta;
+                            best = {
+                                bubble: b,
+                                dirX: dirX,
+                                dirY: dirY
+                            };
                         }
                     }
                 }
 
+                // Recurse into children (only if pointer is inside expanded bounds, which we already ensured)
                 let avgDim = (screenW + screenH) / 2;
                 let childrenFade = Math.max(0, Math.min(1, (avgDim - 200) / 300));
                 let nextAlphaMultiplier = alphaMultiplier * childrenFade;
@@ -970,6 +987,46 @@
             return tplArray.map(t => instantiateFromTemplate(t, parentGeom));
         }
 
+        function syncChildrenFromTemplate(tplArray, parentGeom, existingChildren) {
+            const result = [];
+            for (let i = 0; i < tplArray.length; i++) {
+                const tpl = tplArray[i];
+                let rawW = tpl.relW * parentGeom.w;
+                let rawH = tpl.relH * parentGeom.h;
+                let stepX = parentGeom.w / GRID_DIVISIONS;
+                let stepY = parentGeom.h / GRID_DIVISIONS;
+
+                let w = Math.max(stepX, Math.round(rawW / stepX) * stepX);
+                let h = Math.max(stepY, Math.round(rawH / stepY) * stepY);
+
+                let rawX = parentGeom.x + tpl.relX * parentGeom.w;
+                let rawY = parentGeom.y + tpl.relY * parentGeom.h;
+
+                let snapped = snapChildPositionToParent(rawX, rawY, w, h, parentGeom, tempSnappedCoords);
+
+                if (i < existingChildren.length) {
+                    const node = existingChildren[i];
+                    if (node.text !== tpl.text) {
+                        tagUnregister(node);
+                        node.text = tpl.text;
+                        tagRegister(node);
+                    }
+                    node.x = snapped.x;
+                    node.y = snapped.y;
+                    node.w = w;
+                    node.h = h;
+                    node.children = syncChildrenFromTemplate(tpl.children, node, node.children);
+                    result.push(node);
+                } else {
+                    result.push(instantiateFromTemplate(tpl, parentGeom));
+                }
+            }
+            for (let i = tplArray.length; i < existingChildren.length; i++) {
+                unregisterSubtreeTags(existingChildren[i]);
+            }
+            return result;
+        }
+
         function syncTagGroup(groupNode) {
             const tag = getTag(groupNode.text);
             if (!tag) return;
@@ -979,8 +1036,7 @@
             const template = templateFromChildren(groupNode);
             for (const other of set) {
                 if (other === groupNode) continue;
-                other.children.forEach(unregisterSubtreeTags);
-                other.children = instantiateChildren(template, other);
+                other.children = syncChildrenFromTemplate(template, other, other.children);
             }
             markChanged();
         }
@@ -1144,6 +1200,7 @@
 
         function cancelInteraction() {
             if (activeBubble) {
+                // Ensure any pending changes are synchronized before cancel
                 syncAllAncestorTagGroups(activeBubble.id);
             }
             interactionMode = "none";
@@ -1367,7 +1424,7 @@
                     let deltaX = targetX - activeBubble.x;
                     let deltaY = targetY - activeBubble.y;
                     moveBubbleRecursively(activeBubble, deltaX, deltaY);
-                    syncAllAncestorTagGroups(activeBubble.id);
+                    // Sync deferred to mouse up – removed call here for performance
                     markChanged();
                 } 
                 
@@ -1499,7 +1556,7 @@
                         scaleBubbleHierarchy(activeBubble, scaleX, scaleY, originX, originY);
                     }
 
-                    syncAllAncestorTagGroups(activeBubble.id);
+                    // Sync deferred to mouse up – removed call here for performance
                     markChanged();
                 }
                 return; 
@@ -1537,6 +1594,7 @@
 
         window.addEventListener('mouseup', () => {
             if (activeBubble) {
+                // Synchronize tag groups after the interaction ends
                 syncAllAncestorTagGroups(activeBubble.id);
             }
             interactionMode = 'none';

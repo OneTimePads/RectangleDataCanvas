@@ -268,38 +268,6 @@
             return res;
         }
 
-        // Pattern generator for hyper-fast grid drawing
-        const gridPatternCanvas = document.createElement('canvas');
-        const gridPatternCtx = gridPatternCanvas.getContext('2d');
-        const gridPatternCache = new Map();
-        const MAX_GRID_CACHE_SIZE = 100;
-
-        function getGridPattern(stepX, stepY, dotSize, color) {
-            let roundedStepX = Math.max(1, Math.min(256, Math.round(stepX)));
-            let roundedStepY = Math.max(1, Math.min(256, Math.round(stepY)));
-            let cacheKey = `${roundedStepX}_${roundedStepY}_${dotSize}_${color}`;
-
-            if (gridPatternCache.has(cacheKey)) {
-                return gridPatternCache.get(cacheKey);
-            }
-
-            gridPatternCanvas.width = roundedStepX;
-            gridPatternCanvas.height = roundedStepY;
-            gridPatternCtx.clearRect(0, 0, roundedStepX, roundedStepY);
-            gridPatternCtx.fillStyle = color;
-            gridPatternCtx.fillRect(0, 0, dotSize, dotSize);
-
-            let pattern = ctx.createPattern(gridPatternCanvas, 'repeat');
-
-            if (gridPatternCache.size >= MAX_GRID_CACHE_SIZE) {
-                let oldestKey = gridPatternCache.keys().next().value;
-                gridPatternCache.delete(oldestKey);
-            }
-
-            gridPatternCache.set(cacheKey, pattern);
-            return pattern;
-        }
-
         function ensureRectStructure(node) {
             if (node.r && (!node.w || !node.h)) {
                 node.w = node.r * 2;
@@ -446,7 +414,6 @@
        function computeTextLayout(text, worldW, worldH) {
             if (worldW <= 0 || worldH <= 0) return null;
 
-            // Use a standardized base scale (e.g. max side is 1000) for stable canvas text measurement
             const MAX_DIM = 1000;
             let maxWorldDim = Math.max(worldW, worldH);
             let scaleToNorm = MAX_DIM / maxWorldDim;
@@ -460,7 +427,6 @@
             let words = text.trim().split(/\s+/);
             if (words.length === 0) return null;
 
-            // Limit font size proportionally (e.g., max 40% of the box height)
             let maxPossibleSize = Math.min(paddedH, normH * 0.4);
             let low = 1;
             let high = Math.floor(maxPossibleSize);
@@ -499,7 +465,6 @@
 
             if (bestFontSize < 1 || bestLines.length === 0) return null;
 
-            // Convert the normalized font size back to world scale
             return { 
                 worldFontSize: bestFontSize / scaleToNorm, 
                 bestLines 
@@ -514,14 +479,13 @@
             let minDim = Math.min(screenW, screenH);
             if (minDim < 10) return; 
 
-            // Cache using world dimensions to ensure stability regardless of zoom
             let cacheKey = `${text}_${worldW.toFixed(3)}_${worldH.toFixed(3)}`;
             let layout = textLayoutCache.get(cacheKey);
 
             if (layout === undefined) {
                 layout = computeTextLayout(text, worldW, worldH);
                 if (textLayoutCache.size > 2000) {
-                    textLayoutCache.clear(); // Allocation-free cache flush
+                    textLayoutCache.clear();
                 }
                 textLayoutCache.set(cacheKey, layout);
             }
@@ -530,7 +494,6 @@
 
             let { worldFontSize, bestLines } = layout;
             
-            // Convert world font size to screen font size
             let screenFontSize = worldFontSize * zoom;
             let lineHeight = screenFontSize * 1.2;
             let totalHeight = bestLines.length * lineHeight;
@@ -616,7 +579,7 @@
             let stepScreenY = screenH / GRID_DIVISIONS;
             let minStepScreen = Math.min(stepScreenX, stepScreenY);
 
-            // Optimized Viewport-Clipped Grid Drawing
+            // Optimized Viewport-Clipped Grid Drawing (Batched Path)
             if (minStepScreen >= 3 && alphaMultiplier > 0.05) {
                 let gridAlpha = 0.22 * alphaMultiplier;
                 if (minStepScreen < 8) {
@@ -637,31 +600,25 @@
                     let visH = visBottom - visTop;
 
                     if (visW > 0 && visH > 0) {
+                        let startCol = Math.max(0, Math.floor((visLeft - startX) / stepScreenX));
+                        let endCol = Math.min(GRID_DIVISIONS, Math.ceil((visRight - startX) / stepScreenX));
+                        let startRow = Math.max(0, Math.floor((visTop - startY) / stepScreenY));
+                        let endRow = Math.min(GRID_DIVISIONS, Math.ceil((visBottom - startY) / stepScreenY));
+
                         ctx.save();
                         ctx.globalAlpha = gridAlpha;
+                        ctx.fillStyle = pale.dotFill;
+                        ctx.beginPath();
 
-                        if (stepScreenX > 128 || stepScreenY > 128) {
-                            ctx.fillStyle = pale.dotFill;
-                            let startCol = Math.max(0, Math.floor((visLeft - startX) / stepScreenX));
-                            let endCol = Math.min(GRID_DIVISIONS, Math.ceil((visRight - startX) / stepScreenX));
-                            let startRow = Math.max(0, Math.floor((visTop - startY) / stepScreenY));
-                            let endRow = Math.min(GRID_DIVISIONS, Math.ceil((visBottom - startY) / stepScreenY));
-
-                            for (let c = startCol; c <= endCol; c++) {
-                                let dotX = startX + c * stepScreenX;
-                                if (dotX < visLeft || dotX > visRight) continue;
-                                for (let r = startRow; r <= endRow; r++) {
-                                    let dotY = startY + r * stepScreenY;
-                                    if (dotY >= visTop && dotY <= visBottom) {
-                                        ctx.fillRect(dotX, dotY, dotSize, dotSize);
-                                    }
-                                }
+                        for (let c = startCol; c <= endCol; c++) {
+                            let dotX = startX + c * stepScreenX;
+                            for (let r = startRow; r <= endRow; r++) {
+                                let dotY = startY + r * stepScreenY;
+                                ctx.rect(dotX, dotY, dotSize, dotSize);
                             }
-                        } else {
-                            ctx.fillStyle = getGridPattern(stepScreenX, stepScreenY, dotSize, pale.dotFill);
-                            ctx.translate(startX, startY);
-                            ctx.fillRect(visLeft - startX, visTop - startY, visW, visH);
                         }
+
+                        ctx.fill();
                         ctx.restore();
                         ctx.globalAlpha = 1.0;
                     }
@@ -672,12 +629,11 @@
                 drawGizmo(screenX, screenY, alphaMultiplier, pale.hue);
             }
             
-			let avgDim = (screenW + screenH) / 2;
+            let avgDim = (screenW + screenH) / 2;
             let textFade = Math.max(0, Math.min(1, 1 - (avgDim - 500) / 500));
             let finalTextAlpha = alphaMultiplier * textFade;
 
             if (finalTextAlpha > 0.01) {
-                // UPDATE: Pass world bounds (b.w, b.h) and camera.zoom
                 drawWrappedText(b.text, screenX, screenY, b.w, b.h, camera.zoom, finalTextAlpha, pale);
             }
 
@@ -784,7 +740,6 @@
             return null;
         }
 
-        // Performance fix: add spatial pruning to avoid traversing subtrees far from the pointer
         function findBorderTarget(root, clientX, clientY) {
             let best = null;
             let bestDelta = Infinity;
@@ -802,7 +757,6 @@
                 if (screenX + screenW / 2 + cullMargin < 0 || screenX - screenW / 2 - cullMargin > viewW ||
                     screenY + screenH / 2 + cullMargin < 0 || screenY - screenH / 2 - cullMargin > viewH) return;
 
-                // --- Pruning: skip this node and its children if pointer is far outside its expanded bounds ---
                 let hitMargin = Math.max(6, Math.min(15, Math.min(screenW, screenH) * 0.15));
                 let expandedLeft = screenX - screenW / 2 - hitMargin;
                 let expandedRight = screenX + screenW / 2 + hitMargin;
@@ -811,10 +765,9 @@
 
                 if (clientX < expandedLeft || clientX > expandedRight ||
                     clientY < expandedTop || clientY > expandedBottom) {
-                    return; // pointer is too far, no need to check children
+                    return; 
                 }
 
-                // Check border of current node
                 if (screenW >= 6 && screenH >= 6) {
                     let hw = screenW / 2;
                     let hh = screenH / 2;
@@ -866,7 +819,6 @@
                     }
                 }
 
-                // Recurse into children (only if pointer is inside expanded bounds, which we already ensured)
                 let avgDim = (screenW + screenH) / 2;
                 let childrenFade = Math.max(0, Math.min(1, (avgDim - 200) / 300));
                 let nextAlphaMultiplier = alphaMultiplier * childrenFade;
@@ -899,10 +851,6 @@
             return null;
         }
 
-        // ================================================================
-        // #tag SHARED-CHILDREN SYSTEM
-        // ================================================================
-
         const TAG_RE = /^#([^\s#]+)/;
         function getTag(text) {
             if (!text) return null;
@@ -910,7 +858,6 @@
             return m ? m[1] : null;
         }
 
-        // tag (string) -> Set of live node objects currently carrying that tag
         const tagGroups = new Map();
 
         function tagRegister(node) {
@@ -1218,7 +1165,6 @@
 
         function cancelInteraction() {
             if (activeBubble) {
-                // Ensure any pending changes are synchronized before cancel
                 syncAllAncestorTagGroups(activeBubble.id);
             }
             interactionMode = "none";
@@ -1271,7 +1217,6 @@
                 let dx = e.clientX - screenX;
                 let dy = e.clientY - screenY;
                 
-                // Optimized Fast Squared Distance Gizmo Check
                 if (e.button === 0 && (dx * dx + dy * dy) <= GIZMO_RADIUS_SQ) {
                     activeBubble = b;
                     activeParent = findParent(rootBubble, b.id);
@@ -1442,7 +1387,6 @@
                     let deltaX = targetX - activeBubble.x;
                     let deltaY = targetY - activeBubble.y;
                     moveBubbleRecursively(activeBubble, deltaX, deltaY);
-                    // Sync deferred to mouse up – removed call here for performance
                     markChanged();
                 } 
                 
@@ -1574,7 +1518,6 @@
                         scaleBubbleHierarchy(activeBubble, scaleX, scaleY, originX, originY);
                     }
 
-                    // Sync deferred to mouse up – removed call here for performance
                     markChanged();
                 }
                 return; 
@@ -1595,7 +1538,6 @@
                 let dx = clientX - screenX;
                 let dy = clientY - screenY;
                 
-                // Optimized Fast Squared Distance Gizmo Check
                 if ((dx * dx + dy * dy) <= GIZMO_RADIUS_SQ && minDim > 25) overGizmo = true;
             }
 
@@ -1612,7 +1554,6 @@
 
         window.addEventListener('mouseup', () => {
             if (activeBubble) {
-                // Synchronize tag groups after the interaction ends
                 syncAllAncestorTagGroups(activeBubble.id);
             }
             interactionMode = 'none';
@@ -1650,7 +1591,6 @@
                 let dx = e.clientX - screenX;
                 let dy = e.clientY - screenY;
                 
-                // Optimized Fast Squared Distance Gizmo Check
                 if ((dx * dx + dy * dy) <= GIZMO_RADIUS_SQ) return; 
 
                 let text = prompt("Enter text for the nested rectangle (start with #tag to link shared children):", pendingBubbleText);
